@@ -1,0 +1,27 @@
+# Virtual Environment
+venv/
+.venv/
+.local/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment Variables & Secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Data & Storage
+data/uploads/*
+!data/uploads/.gitkeep
+data/vector_store/*
+!data/vector_store/.gitkeep
+*.db
+*.sqlite3
+
+# Logs & Testing
+*.log
+.pytest_cache/
+.coverage
+htmlcov/

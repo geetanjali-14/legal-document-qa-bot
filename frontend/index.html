@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Legal Document Q&A Assistant</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <span class="icon">⚖️</span>
+        <h1>Legal Document Q&A</h1>
+      </div>
+      <div class="disclaimer-badge">
+        <span>Grounded Legal Assistant • Document Analysis Only</span>
+      </div>
+    </header>
+
+    <div class="main-layout">
+      <!-- Sidebar / Document Management -->
+      <aside class="sidebar">
+        <div class="card upload-card">
+          <h2>Upload Document</h2>
+          <p class="subtitle">Upload a legal PDF (Contract, Agreement, NDA, Lease)</p>
+          
+          <div class="drop-zone" id="dropZone">
+            <input type="file" id="fileInput" accept=".pdf" />
+            <div class="drop-prompt">
+              <span class="upload-icon">📄</span>
+              <p>Drag & drop PDF here or <strong>browse</strong></p>
+              <span class="file-hint">Max size: 25 MB</span>
+            </div>
+          </div>
+
+          <div id="uploadStatus" class="status-box hidden"></div>
+        </div>
+
+        <div class="card documents-card">
+          <div class="section-title">
+            <h2>Your Documents</h2>
+            <button id="refreshDocsBtn" class="icon-btn" title="Refresh">🔄</button>
+          </div>
+          <div id="documentsList" class="documents-list">
+            <p class="empty-text">No documents uploaded yet.</p>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Chat Area -->
+      <main class="chat-section">
+        <div class="active-doc-banner" id="activeDocBanner">
+          <div class="doc-info">
+            <span class="label">ACTIVE DOCUMENT:</span>
+            <strong id="activeDocName">None selected</strong>
+            <span id="activeDocStats" class="badge"></span>
+          </div>
+          <div class="legal-safety-note">
+            ⚠️ Responses are grounded strictly in this document. Not formal legal advice.
+          </div>
+        </div>
+
+        <!-- Chat Conversation Messages -->
+        <div class="chat-messages" id="chatMessages">
+          <div class="message assistant intro-msg">
+            <div class="message-content">
+              <h3>Welcome to the Legal Document Q&A Assistant</h3>
+              <p>Please upload or select a legal contract or document to begin. Once indexed, you can ask precise questions regarding:</p>
+              <ul>
+                <li>Termination notice periods and trigger conditions</li>
+                <li>Payment terms, late fees, and compensation schedules</li>
+                <li>Confidentiality and non-disclosure obligations</li>
+                <li>Governing law and dispute resolution procedures</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Input Box -->
+        <div class="chat-input-container">
+          <form id="chatForm">
+            <input 
+              type="text" 
+              id="questionInput" 
+              placeholder="Select a document first to ask questions..." 
+              disabled 
+              autocomplete="off"
+            />
+            <button type="submit" id="sendBtn" disabled>
+              <span>Ask</span> ➔
+            </button>
+          </form>
+          <div class="input-footer">
+            <span id="charCount">0/1500</span>
+            <span>Answers generated strictly from verified document context with citations</span>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,133 @@
+import json
+from pathlib import Path
+from typing import List, Tuple, Optional, Dict
+import numpy as np
+from app.models.document import DocumentChunk
+from app.core.config import settings
+from app.core.logging import logger
+
+
+class VectorStore:
+    """
+    Production-grade local vector store with cosine similarity, metadata filtering,
+    and persistent JSON/NPZ backing.
+    """
+    def __init__(self, storage_dir: Optional[Path] = None):
+        self.storage_dir = storage_dir or settings.VECTOR_STORE_DIR
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        # In-memory document stores: doc_id -> chunks, doc_id -> embeddings matrix
+        self.chunks_by_doc: Dict[str, List[DocumentChunk]] = {}
+        self.vectors_by_doc: Dict[str, np.ndarray] = {}
+        self._load_all_persisted()
+
+    def _get_doc_vector_path(self, document_id: str) -> Path:
+        return self.storage_dir / f"{document_id}_vectors.npy"
+
+    def _get_doc_chunks_path(self, document_id: str) -> Path:
+        return self.storage_dir / f"{document_id}_chunks.json"
+
+    def _load_all_persisted(self) -> None:
+        """Scan vector store directory and restore saved documents on startup."""
+        for chunks_path in self.storage_dir.glob("*_chunks.json"):
+            doc_id = chunks_path.stem.replace("_chunks", "")
+            vector_path = self._get_doc_vector_path(doc_id)
+            if vector_path.exists():
+                try:
+                    with open(chunks_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        chunks = [DocumentChunk(**item) for item in data]
+                    vectors = np.load(str(vector_path))
+                    self.chunks_by_doc[doc_id] = chunks
+                    self.vectors_by_doc[doc_id] = vectors
+                    logger.info(f"Loaded persisted vector store for doc {doc_id} ({len(chunks)} chunks)")
+                except Exception as e:
+                    logger.error(f"Error loading persisted vectors for {doc_id}: {str(e)}")
+
+    def add_document(self, document_id: str, chunks: List[DocumentChunk], embeddings: np.ndarray) -> None:
+        """Store chunk vectors and serialize to disk."""
+        if len(chunks) != len(embeddings):
+            raise ValueError(f"Mismatch: {len(chunks)} chunks vs {len(embeddings)} vectors.")
+
+        # Normalize vectors for cosine similarity (dot product of L2 normalized vectors)
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        normalized_vectors = embeddings / norms
+
+        self.chunks_by_doc[document_id] = chunks
+        self.vectors_by_doc[document_id] = normalized_vectors
+
+        # Persist to disk
+        np.save(str(self._get_doc_vector_path(document_id)), normalized_vectors)
+        with open(self._get_doc_chunks_path(document_id), "w", encoding="utf-8") as f:
+            json.dump([c.model_dump() for c in chunks], f, indent=2)
+
+        logger.info(f"Stored {len(chunks)} chunks and vectors for document {document_id}")
+
+    def delete_document(self, document_id: str) -> bool:
+        """Remove document from memory and disk."""
+        removed = False
+        if document_id in self.chunks_by_doc:
+            del self.chunks_by_doc[document_id]
+            removed = True
+        if document_id in self.vectors_by_doc:
+            del self.vectors_by_doc[document_id]
+            removed = True
+
+        v_path = self._get_doc_vector_path(document_id)
+        if v_path.exists():
+            v_path.unlink()
+            removed = True
+
+        c_path = self._get_doc_chunks_path(document_id)
+        if c_path.exists():
+            c_path.unlink()
+            removed = True
+
+        return removed
+
+    def search(
+        self,
+        document_id: str,
+        query_vector: np.ndarray,
+        top_k: int = 4,
+        similarity_threshold: float = 0.1
+    ) -> List[Tuple[DocumentChunk, float]]:
+        """
+        Execute cosine similarity search against chunks scoped specifically to document_id.
+        Prevents accidental cross-document contamination.
+        """
+        if document_id not in self.vectors_by_doc or document_id not in self.chunks_by_doc:
+            logger.warning(f"No vectors indexed for document_id {document_id}")
+            return []
+
+        doc_vectors = self.vectors_by_doc[document_id]
+        chunks = self.chunks_by_doc[document_id]
+
+        if len(chunks) == 0 or len(doc_vectors) == 0:
+            return []
+
+        # Ensure query vector dimension matches
+        if query_vector.shape[1] != doc_vectors.shape[1]:
+            logger.warning(
+                f"Dimension mismatch between query ({query_vector.shape[1]}) and store ({doc_vectors.shape[1]})"
+            )
+            return []
+
+        q_norm = np.linalg.norm(query_vector)
+        if q_norm == 0:
+            q_norm = 1.0
+        normalized_q = query_vector / q_norm
+
+        # Cosine similarity is dot product
+        similarities = np.dot(doc_vectors, normalized_q.T).flatten()
+
+        # Sort indices descending
+        sorted_indices = np.argsort(similarities)[::-1]
+
+        results: List[Tuple[DocumentChunk, float]] = []
+        for idx in sorted_indices[:top_k]:
+            sim = float(similarities[idx])
+            if sim >= similarity_threshold:
+                results.append((chunks[idx], sim))
+
+        return results
