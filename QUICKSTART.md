@@ -10,8 +10,17 @@ cd '/home/rails/Work/Legal QA chatbot'
 
 ## 2) Activate the virtual environment
 
+Use the project’s existing environment:
+
 ```bash
-source .venv/bin/activate
+source venv/bin/activate
+```
+
+If the environment does not exist yet, create it first:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
 ```
 
 ## 3) Start the app

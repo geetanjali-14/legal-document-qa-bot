@@ -55,11 +55,19 @@ A local legal document question-and-answer application built with FastAPI. It le
 cd /path/to/Legal\ QA\ chatbot
 ```
 
-### 2) Create a virtual environment
+### 2) Create or activate the virtual environment
+
+This repo already includes a working virtual environment in `venv`, so the usual setup is:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+source venv/bin/activate
+```
+
+If you need to create one fresh instead, run:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
 ```
 
 ### 3) Install dependencies

@@ -7,12 +7,67 @@ from app.core.config import settings
 from app.core.logging import logger
 
 
+import re
+from typing import Set
+
+STOPWORDS = {
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "up", "about", "into", "through", "after",
+    "before", "what", "which", "who", "whom", "this", "that", "these",
+    "those", "am", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "having", "do", "does", "did", "doing", "would",
+    "should", "could", "ought", "i", "you", "he", "she", "it", "we", "they",
+    "if", "as", "than", "so", "can", "will", "just", "under", "per"
+}
+
+
 class RetrievalService:
     def __init__(self, embedding_service: EmbeddingService, vector_store: VectorStore):
         self.embedding_service = embedding_service
         self.vector_store = vector_store
         self.last_retrieval_latency_ms: float = 0.0
         self.last_embedding_latency_ms: float = 0.0
+
+    @staticmethod
+    def extract_content_words(text: str) -> Set[str]:
+        """Extract lowercase content words (excluding common stop words)."""
+        words = set(re.findall(r"[a-zA-Z]{3,}", text.lower()))
+        return words - STOPWORDS
+
+    def is_context_relevant(self, query: str, results: List[Tuple[DocumentChunk, float]]) -> bool:
+        """
+        Evaluates whether retrieved results represent sufficient semantic evidence
+        to answer the query, rather than incidental lexical overlap on generic terms.
+        """
+        if not results:
+            return False
+
+        query_words = self.extract_content_words(query)
+        if not query_words:
+            return True
+
+        top_chunk, top_score = results[0]
+        chunk_words = self.extract_content_words(top_chunk.text)
+        if top_chunk.section:
+            chunk_words.update(self.extract_content_words(top_chunk.section))
+
+        matching_words = query_words & chunk_words
+        overlap_ratio = len(matching_words) / len(query_words)
+
+        # High semantic similarity with at least one matching content word
+        if top_score >= settings.RELEVANCE_CONFIDENCE_THRESHOLD and len(matching_words) >= 1:
+            return True
+
+        # Moderate semantic similarity with substantial query content word coverage
+        if top_score >= settings.SIMILARITY_THRESHOLD and overlap_ratio >= settings.MIN_CONTENT_WORD_OVERLAP:
+            return True
+
+        logger.info(
+            f"Semantic relevance gate rejected retrieval: top_score={top_score:.4f} "
+            f"(req_score={settings.RELEVANCE_CONFIDENCE_THRESHOLD}), "
+            f"overlap_ratio={overlap_ratio:.2f} ({len(matching_words)}/{len(query_words)} words: {matching_words})"
+        )
+        return False
 
     def retrieve(
         self,
@@ -23,6 +78,7 @@ class RetrievalService:
     ) -> List[Tuple[DocumentChunk, float]]:
         """
         Embed query and retrieve top matching document chunks with similarity scores.
+        Applies semantic confidence gate to reject irrelevant retrieval results.
         Tracks retrieval latency and query embedding latency.
         """
         t_retrieval_start = time.perf_counter()
@@ -41,8 +97,7 @@ class RetrievalService:
         query_vector = self.embedding_service.embed_query(query)
         self.last_embedding_latency_ms = max(0.0, (time.perf_counter() - t_embed_start) * 1000.0)
 
-
-        results = self.vector_store.search(
+        raw_results = self.vector_store.search(
             document_id=document_id,
             query_vector=query_vector,
             top_k=k,
@@ -50,9 +105,25 @@ class RetrievalService:
         )
         self.last_retrieval_latency_ms = max(0.0, (time.perf_counter() - t_retrieval_start) * 1000.0)
 
+        # Apply semantic relevance gate when using default threshold
+        if threshold is None and raw_results:
+            if not self.is_context_relevant(query, raw_results):
+                results = []
+            else:
+                results = raw_results
+        else:
+            results = raw_results
+
         logger.info(
             f"Retrieved {len(results)} chunks above threshold {sim_threshold} "
-            f"(retrieval={self.last_retrieval_latency_ms:.2f}ms, embedding={self.last_embedding_latency_ms:.2f}ms)"
+            f"(raw={len(raw_results)}, retrieval={self.last_retrieval_latency_ms:.2f}ms, "
+            f"embedding={self.last_embedding_latency_ms:.2f}ms)"
         )
+
+        for chunk, score in results:
+            logger.info(
+                f"Retrieved chunk score={score:.4f}, "
+                f"section={chunk.section}, page={chunk.page_number}"
+            )
         return results
 

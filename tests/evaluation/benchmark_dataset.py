@@ -223,7 +223,7 @@ BENCHMARK_CASES: List[BenchmarkCase] = [
         case_id="UNANS-004",
         category=BenchmarkCategory.UNANSWERABLE,
         question="What are the employee non-solicitation restrictions for the client?",
-        description="Defect exposure case: Non-solicitation clause does not exist, but general contract words ('client') trigger lexical retrieval and mock hallucination without semantic confidence gate.",
+        description="Evaluates semantic confidence gate: Non-solicitation clause does not exist, and superficial lexical overlap ('client') is rejected, bypassing LLM with zero citations.",
         expected_refusal=True,
         expected_answer_contains=["couldn't find enough information"],
         forbidden_answer_contains=["work made for hire", "deliverables"],
@@ -233,7 +233,7 @@ BENCHMARK_CASES: List[BenchmarkCase] = [
         expected_retrieval_text_contains=[],
         expected_citation_count_min=0,
         expected_citations=[],
-        expect_llm_invocation=None
+        expect_llm_invocation=False
     ),
 
     # -------------------------------------------------------------

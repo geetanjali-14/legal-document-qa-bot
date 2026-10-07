@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     TOP_K: int = 4
     MAX_TOP_K: int = 10
     SIMILARITY_THRESHOLD: float = 0.1
+    RELEVANCE_CONFIDENCE_THRESHOLD: float = 0.35
+    MIN_CONTENT_WORD_OVERLAP: float = 0.35
     MAX_CONTEXT_CHARS: int = 8000
 
     # Chat & Token Limits

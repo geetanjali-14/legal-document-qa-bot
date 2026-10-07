@@ -108,15 +108,20 @@ def test_benchmark_full_suite_execution(isolated_eval_env):
 
     summary = compute_benchmark_summary(results)
     assert summary.total_cases == len(BENCHMARK_CASES)
-    # The benchmark includes defect exposure case UNANS-004; verify evaluation caught it cleanly
-    assert summary.failed_cases >= 1
+    # UNANS-004 is now handled cleanly by the semantic confidence gate: 0 failures
+    assert summary.failed_cases == 0
     unans_4 = next(r for r in results if r.case_id == "UNANS-004")
-    assert unans_4.status == EvaluationStatus.FAIL
+    assert unans_4.status == EvaluationStatus.PASS
+    assert unans_4.answer_eval == EvaluationStatus.PASS
+    assert unans_4.refusal_eval == EvaluationStatus.PASS
+    assert unans_4.citation_eval == EvaluationStatus.PASS
+    assert unans_4.grounding_eval == EvaluationStatus.PASS
+    assert unans_4.actual_confidence == "insufficient_context"
+    assert unans_4.actual_citation_count == 0
 
-    # All standard factual and adversarial cases must pass
+    # All benchmark cases must pass
     for r in results:
-        if r.category in [BenchmarkCategory.DIRECT_FACT.value, BenchmarkCategory.ADVERSARIAL.value]:
-            assert r.status == EvaluationStatus.PASS, f"Case {r.case_id} failed: {r.notes}"
+        assert r.status == EvaluationStatus.PASS, f"Case {r.case_id} failed: {r.notes}"
 
 
 def test_benchmark_direct_fact_category(isolated_eval_env):
@@ -155,7 +160,7 @@ def test_benchmark_unanswerable_category(isolated_eval_env):
     client = isolated_eval_env["client"]
     doc_id = isolated_eval_env["doc_id"]
 
-    unans_cases = [c for c in BENCHMARK_CASES if c.case_id in ["UNANS-001", "UNANS-002", "UNANS-003"]]
+    unans_cases = [c for c in BENCHMARK_CASES if c.category == BenchmarkCategory.UNANSWERABLE]
     for case in unans_cases:
         resp = client.post("/api/chat", json={"document_id": doc_id, "question": case.question})
         assert resp.status_code == 200
