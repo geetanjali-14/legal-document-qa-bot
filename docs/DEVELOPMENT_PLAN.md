@@ -2,7 +2,7 @@
 ## Legal Document Q&A Assistant
 
 * **Document Version:** 1.1.0
-* **Status:** Post-MVP-001 Baseline / Phased Optimization Roadmap
+* **Status:** Current Implementation and Phased Optimization Roadmap (verified October 7, 2026)
 * **Author:** Lead Architect & QA Engineering Lead
 * **Last Updated:** October 7, 2026
 
@@ -13,7 +13,7 @@
 This document outlines the phased engineering roadmap for stabilizing, enhancing, and preparing the **Legal Document Q&A Assistant** for production.
 
 > [!IMPORTANT]
-> **MVP-001 Is COMPLETE:** Phase 0 (Planning) and Phase 1 (MVP-001 Stabilization) are completed. The automated test baseline is 100% green (11 passed, 0 skipped, 0 deselected).
+> **MVP-001 Is COMPLETE:** Phase 0 (Planning) and Phase 1 (MVP-001 Stabilization) are completed. The current verified full-suite baseline is 63 passed, 1 warning, 0 failed (`PYTHONPATH=. ./venv/bin/pytest`).
 > 
 > **Implementation Scope Rule:** This document governs planning only. No application source code, tests, dependencies, or environment configurations are modified during this documentation update.
 
@@ -44,13 +44,14 @@ until measured user volume, dataset scale, or operational necessity explicitly j
 
 ---
 
-## 2. Test Baseline (MVP-001 Verified)
+## 2. Current Test Baseline
 
 * **Test Framework:** `pytest` 9.1.1, Python 3.12.3
-* **Total Automated Tests:** 11
-* **Passing:** 11
-* **Skipped / Deselected:** 0
-* **Execution Command:** `PYTHONPATH=. pytest`
+* **Current total automated tests:** 63
+* **Passing:** 63
+* **Warnings:** 1 Starlette deprecation warning from the installed TestClient/httpx combination
+* **Failed:** 0
+* **Execution Command:** `PYTHONPATH=. ./venv/bin/pytest`
 * **Verified Behaviors:**
   1. `test_health_endpoint`: Health diagnostics and active provider reporting return HTTP 200.
   2. `test_reject_invalid_file_extension`: Uploading `.exe` rejected with HTTP 400.
@@ -74,7 +75,7 @@ Phase 1: MVP-001 Stabilization
 [STATUS: COMPLETED]
    ↓
 Phase 2: Foundational RAG Quality & Efficiency
-[STATUS: PLANNED (P1)]
+[STATUS: ACTIVE P1; OPT-001 / OPT-008 COMPLETED; OPT-018 NEXT]
    ↓
 Phase 3: Conversational Retrieval & Contextualization
 [STATUS: PLANNED (P1)]
@@ -95,7 +96,7 @@ Phase 8: Advanced Legal Features
 [STATUS: FUTURE (P3)]
    ↓
 Phase 9: Production Readiness & Observability
-[STATUS: PLANNED (P1)]
+[STATUS: OPT-017 COMPLETED; PROD-001 PLANNED (P1)]
 ```
 
 ---
@@ -116,7 +117,7 @@ Phase 9: Production Readiness & Observability
   * **Fix 3 (Section Association):** Fixed `ChunkingService` state tracking so chunks inherit their parent section title rather than reverting to generic placeholders.
   * **Fix 4 (Mock LLM Regex Boundary):** Upgraded `MockLLMProvider` sentence-splitting regex to prevent splitting on numbers or abbreviations (preserving `"30 days"`).
   * **Fix 5 (Keyword Overlap Scoring):** Improved mock ranking to ensure the most relevant legal sentence is selected for output generation.
-  * **Verification:** Full test suite verified green (11/11 passing).
+   * **Historical verification at MVP-001 sign-off:** 11/11 passing. The current repository-wide baseline is 63 passing, 1 warning.
 
 ---
 
@@ -137,6 +138,7 @@ Phase 9: Production Readiness & Observability
 #### Task OPT-003: "No Evidence = No LLM" Gate Enhancement
 * **Priority:** **P1** | **Status:** PLANNED
 * **Dependencies:** MVP-001
+* **Dependency decision:** A former dependency diagram placed OPT-013 before this task, but the task definition does not. Whether OPT-013 is a prerequisite remains an **OPEN DECISION**; the current diagram does not assert that edge.
 * **Objective:** Guarantee that queries with insufficient evidence never consume LLM prompt tokens.
 * **Implementation:**
   * Formalize `RELEVANCE_CONFIDENCE_THRESHOLD` in `RetrievalService`.
@@ -162,21 +164,21 @@ Phase 9: Production Readiness & Observability
 #### Task OPT-008: Dense Local Embedding Evaluation & Integration
 * **Priority:** **P1** | **Status:** COMPLETED
 * **Dependencies:** MVP-001
-* **Objective:** Enable local semantic synonym retrieval (*"cancel"* matches *"terminate"*) without external API costs.
+* **Objective:** Enable selectable local semantic synonym retrieval (*"cancel"* matches *"terminate"*) without external embedding API costs.
 * **Implementation:**
-  * Implemented `FastEmbedProvider` in `app/services/embedding_service.py` using FastEmbed with ONNX runtime backing and `BAAI/bge-small-en-v1.5` (384-dimensional dense vectors).
+   * Implemented `FastEmbedProvider` in `app/services/embedding_service.py` using FastEmbed with ONNX runtime backing and `BAAI/bge-small-en-v1.5` (384-dimensional dense vectors). TF-IDF remains the configured default; the inspected app runtime initialized TF-IDF / `tfidf-scikit`.
   * Added `"fastembed"` to `Settings.EMBEDDING_PROVIDER` literal choices in `app/core/config.py` with configuration fallback.
   * Preserved full backward compatibility with `TFIDFEmbeddingProvider`, `MockEmbeddingProvider`, and `OpenAIEmbeddingProvider`.
-  * Added `EmbeddingDimensionMismatchError` in `app/core/errors.py` and strict dimensional validation in `VectorStore.search` to prevent silent dimension mismatches between stored vectors and query vectors across provider switches.
-  * Stored `embedding_provider` and `embedding_model` metadata in `DocumentMetadata` for provenance tracking.
+   * Added `EmbeddingDimensionMismatchError` and strict query/store dimension validation in `VectorStore.search`; new index sidecars record actual provider, model, dimension, and chunk count. Provider/model identity comes from the instantiated embedding provider, not assumptions about `.env`.
+   * Persisted matrix dimensions are checked against sidecar metadata when present. Duplicate reuse compares provider/model metadata and reprocesses incompatible indexes; missing legacy sidecars remain loadable.
   * Handled dimension mismatch errors deterministically in `app/api/routes_chat.py` returning HTTP 400 with `X-Error-Category: embedding_dimension_mismatch`.
 * **Acceptance Criteria:** Synonym retrieval passes test suite on local CPU with $< 50$ms query embedding latency (~6ms observed); persisted vectors remain consistent across restarts.
 
 #### Task OPT-018: RAG Evaluation Benchmark Suite
-* **Priority:** **P1** | **Status:** PLANNED
-* **Dependencies:** MVP-001, OPT-008
-* **Objective:** Establish an automated evaluation dataset of legal contracts with answerable, unanswerable, and adversarial queries.
-* **Acceptance Criteria:** Automated CI test asserting 0% hallucination rate and 100% refusal rate on ungrounded queries.
+* **Priority:** **P1** | **Status:** **NEXT (PLANNED; NOT IMPLEMENTED)**
+* **Dependencies:** MVP-001, OPT-008, OPT-017 (all complete)
+* **Objective:** Establish repeatable offline evaluation for the existing implementation, covering grounded answer correctness, refusal correctness, citation accuracy, retrieval quality, token/cost measurement, and regression detection.
+* **Acceptance Criteria:** Automated evaluation records reproducible outcomes, asserts grounded answers/citations for supported cases and refusals for unanswerable cases, and reports relevant telemetry. It measures the current system and does not implement runtime features or other roadmap tasks.
 
 ---
 
@@ -334,7 +336,8 @@ Phase 9: Production Readiness & Observability
 * **Priority:** **P1** | **Status:** COMPLETED
 * **Dependencies:** MVP-001 Baseline
 * **Objective:** Capture input/output token counts, estimated dollar costs, request/retrieval/embedding/LLM latencies, and request identifiers per request.
-* **Acceptance Criteria:** Response headers (X-Request-ID), API telemetry field, and structured log records provide complete token, latency, and cost telemetry.
+* **Implementation:** Response and structured telemetry include request ID/status, retrieved chunk count, provider/model, total/retrieval/embedding/LLM latency, token usage type (`actual`, `estimated`, or `unknown`), available token counts/estimates, and estimated costs. Document-processing telemetry includes phase latencies and embedding usage/cost when available. Costs may be null when usage or pricing is unavailable; cache-hit telemetry is not implemented.
+* **Acceptance Criteria:** Response headers, API telemetry, and structured logs expose available request/token/latency/cost data without presenting estimates as actual billing usage.
 
 
 #### Task PROD-001: Production Containerization
@@ -363,16 +366,16 @@ Retrieval Cache (OPT-011) & Answer Cache (OPT-012)
 ```
 
 ```text
-Dense / Hybrid Retrieval (OPT-008, OPT-013)
-        ↓
 Relevance Threshold & Evidence Gate (OPT-003)
-        ↓
+   ↓
 Adaptive Top-K (OPT-004) & Context Deduplication (OPT-005)
-        ↓
+   ↓
 Prompt Injection Protection (OPT-016)
-        ↓
+   ↓
 Token-Efficient LLM Synthesis
 ```
+
+Retrieval foundations: OPT-008 is **COMPLETED**. OPT-013 is an **OPEN DECISION**. The task definition lists MVP-001 as OPT-003's dependency; whether OPT-013 must precede OPT-003 is **OPEN DECISION**, not a confirmed dependency.
 
 ```text
 Conversation History Tracking
@@ -414,9 +417,9 @@ Model Routing (OPT-019) & Provider Fallback (OPT-020)
 | **OPT-014** | Section & Clause-Aware Retrieval | P2 | Phase 4 | PLANNED | `app/services/chunking_service.py` |
 | **OPT-015** | Long Document Hierarchical Strategy | P2 | Phase 4 | PLANNED | `app/services/chunking_service.py` |
 | **OPT-016** | Prompt Injection Defense | P1 | Phase 6 | PLANNED | `app/services/llm_service.py` |
-| **OPT-017** | Token & Cost Telemetry Logging | P1 | Phase 2 | COMPLETED | `app/core/telemetry.py` |
+| **OPT-017** | Token & Cost Telemetry Logging | P1 | Phase 9 | COMPLETED | `app/core/telemetry.py` |
 
-| **OPT-018** | RAG Evaluation Benchmark Suite | P1 | Phase 2 | PLANNED | `tests/evaluation/test_rag_eval.py` |
+| **OPT-018** | RAG Evaluation Benchmark Suite | P1 | Phase 2 | NEXT (PLANNED) | `tests/evaluation/test_rag_eval.py` |
 | **OPT-019** | Model Routing Strategy | P2 | Phase 7 | OPEN DECISION | `app/services/llm_service.py` |
 | **OPT-020** | Bounded Provider Fallback | P2 | Phase 7 | OPEN DECISION | `app/services/llm_service.py` |
 | **OPT-021** | Hard Resource Limits Configuration | P1 | Phase 6 | COMPLETED | `app/core/config.py` |
@@ -426,10 +429,9 @@ Model Routing (OPT-019) & Provider Fallback (OPT-020)
 
 ## 7. Open Architecture & Product Decisions
 
-1. **TF-IDF vs. Dense Local Embeddings (`OPT-008`):**
-   * *Status:* **OPEN DECISION**
-   * *Options:* Retain TF-IDF (zero dependencies) vs. `fastembed` (ONNX local semantic) vs. `sentence-transformers`.
-   * *Decision Criterion:* CPU inference speed on 500-character chunks vs. semantic recall on legal terms.
+1. **Local Embedding Default Policy (`OPT-008` integration COMPLETED):**
+   * *Implemented:* Selectable FastEmbed with `BAAI/bge-small-en-v1.5`; TF-IDF remains the configured default, and the inspected runtime used TF-IDF / `tfidf-scikit`.
+   * *OPEN DECISION:* Whether to change the deployment default and whether to evaluate additional local embedding frameworks.
 2. **Metadata Persistence Backend (`DB-001`):**
    * *Status:* **OPEN DECISION**
    * *Options:* SQLite (file-based, zero configuration) vs. PostgreSQL (enterprise multi-tenant).
@@ -463,19 +465,20 @@ Model Routing (OPT-019) & Provider Fallback (OPT-020)
 
 ## 8. Traceability Matrix
 
-| Requirement | Architecture Component | Task ID | Verification Method |
-|---|---|---|---|
-| **Duplicate Avoidance** | Document Identity / Hasher | `OPT-001` | Upload identical file; verify 0 duplicate vector stores created. |
-| **Metadata Short-Circuit** | Question Router | `OPT-002` | Ask page count; verify 0 LLM calls made and $< 10$ms latency. |
-| **No Hallucination / Evidence Gate** | Evidence Gate | `OPT-003` | Query non-existent clause; verify refusal and 0 citations. |
-| **Lower Token Usage** | Context Optimizer | `OPT-004`, `OPT-005` | Measure context token count on multi-chunk retrieval. |
-| **Follow-Up Questions** | Query Contextualizer | `OPT-006`, `OPT-007` | Multi-turn integration test with pronoun questions. |
-| **Semantic Synonym Search** | Dense Embedding Provider | `OPT-008` | Unit test matching *"cancel agreement"* with *"terminate agreement"*. |
-| **Embedding Efficiency** | Embedding Cache | `OPT-009` | Re-index document; verify cached chunk embeddings reused. |
-| **Ingestion Efficiency** | Processing Cache | `OPT-010` | Re-process document; verify extraction reused from cache. |
-| **Rapid Q&A Hits** | Answer Cache | `OPT-012` | Repeated query returns identical answer in $< 15$ms. |
-| **Legal Structure Integrity** | Clause Parser | `OPT-014` | Verify nested clause hierarchy preserved in chunk metadata. |
-| **Prompt Injection Defense** | LLM Guard / Demarcator | `OPT-016` | Adversarial injection contract fails to override system instructions. |
-| **Cost & Token Visibility** | Observability Logger | `OPT-017` | Inspect response logs; verify input/output tokens and cost logged. |
-| **RAG Grounding Assurance** | Evaluation Suite | `OPT-018` | CI evaluation script tests 100% refusal on negative contract queries. |
-| **Resource Abuse Protection** | Limits Enforcer | `OPT-021` | Upload oversized file; verify immediate HTTP 400 rejection. |
+| Requirement | Architecture Component | Task ID | Status | Verification Method |
+|---|---|---|---|---|
+| **Duplicate Avoidance** | Document Identity / Hasher | `OPT-001` | **COMPLETED** | Upload identical file under another filename; verify reuse and no re-indexing. |
+| **Metadata Short-Circuit** | Question Router | `OPT-002` | **PLANNED** | Ask page count; verify 0 LLM calls. |
+| **Enhanced Evidence Gate** | Evidence Gate | `OPT-003` | **PLANNED; OPT-013 relation OPEN DECISION** | Test insufficient-but-nonempty evidence; verify refusal and 0 citations. |
+| **Lower Token Usage** | Context Optimizer | `OPT-004`, `OPT-005` | **PLANNED** | Measure context tokens and answer quality. |
+| **Follow-Up Questions** | Query Contextualizer | `OPT-006`, `OPT-007` | **PLANNED** | Multi-turn tests with pronoun questions and bounded history. |
+| **Semantic Synonym Search** | Dense Embedding Provider | `OPT-008` | **COMPLETED** | Synonym, latency, persistence, compatibility, and dimension tests. |
+| **Hybrid Retrieval** | Lexical / Dense Retrieval | `OPT-013` | **OPEN DECISION** | Decide fusion strategy and evaluate exact-term/concept retrieval. |
+| **Embedding Efficiency** | Embedding Cache | `OPT-009` | **PLANNED** | Re-index; verify unchanged chunk embeddings are reused. |
+| **Ingestion Efficiency** | Processing Cache | `OPT-010` | **PLANNED** | Re-process; verify extraction is reused. |
+| **Rapid Q&A Hits** | Answer Cache | `OPT-012` | **PLANNED** | Repeat query; verify answer cache hit and zero embedding/LLM use. |
+| **Legal Structure Integrity** | Clause Parser | `OPT-014` | **PLANNED** | Verify nested clause hierarchy in chunk metadata. |
+| **Prompt Injection Defense** | LLM Guard / Demarcator | `OPT-016` | **PLANNED** | Adversarial document-injection evaluation. |
+| **Cost & Token Visibility** | Observability Logger | `OPT-017` | **COMPLETED** | Inspect telemetry; distinguish actual and estimated usage. |
+| **RAG Grounding Assurance** | Evaluation Suite | `OPT-018` | **NEXT** | Repeatable evaluation of grounded answers, refusals, citations, retrieval, tokens, cost, and latency. |
+| **Resource Abuse Protection** | Limits Enforcer | `OPT-021` | **COMPLETED** | Boundary and rejection tests for configured resource limits. |
