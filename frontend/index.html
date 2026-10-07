@@ -8,9 +8,9 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="app-container">
+  <div class="app-container legal-workspace">
     <!-- Header -->
-    <header class="app-header">
+    <header class="app-header legal-header">
       <div class="brand">
         <span class="icon">⚖️</span>
         <h1>Legal Document Q&A</h1>
@@ -20,9 +20,9 @@
       </div>
     </header>
 
-    <div class="main-layout">
+    <div class="main-layout legal-layout">
       <!-- Sidebar / Document Management -->
-      <aside class="sidebar">
+      <aside class="sidebar legal-sidebar">
         <div class="card upload-card">
           <h2>Upload Document</h2>
           <p class="subtitle">Upload a legal PDF (Contract, Agreement, NDA, Lease)</p>
@@ -51,7 +51,7 @@
       </aside>
 
       <!-- Main Chat Area -->
-      <main class="chat-section">
+      <main class="chat-section legal-chat-section">
         <div class="active-doc-banner" id="activeDocBanner">
           <div class="doc-info">
             <span class="label">ACTIVE DOCUMENT:</span>
@@ -66,10 +66,17 @@
         <!-- Chat Conversation Messages -->
         <div class="chat-messages" id="chatMessages">
           <div class="message assistant intro-msg">
-            <div class="message-content">
+            <div class="message-content legal-intro-panel">
+              <div class="intro-kicker">Document research workflow</div>
               <h3>Welcome to the Legal Document Q&A Assistant</h3>
               <p>Please upload or select a legal contract or document to begin. Once indexed, you can ask precise questions regarding:</p>
-              <ul>
+              <div class="research-tags" aria-label="Research topics">
+                <span class="research-tag">Termination</span>
+                <span class="research-tag">Payment</span>
+                <span class="research-tag">Confidentiality</span>
+                <span class="research-tag">Disputes</span>
+              </div>
+              <ul class="legal-checklist">
                 <li>Termination notice periods and trigger conditions</li>
                 <li>Payment terms, late fees, and compensation schedules</li>
                 <li>Confidentiality and non-disclosure obligations</li>
