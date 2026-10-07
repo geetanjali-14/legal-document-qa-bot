@@ -1,5 +1,6 @@
 from typing import List, Optional
 from pydantic import BaseModel, Field
+from app.core.telemetry import ChatTelemetry
 
 
 class Citation(BaseModel):
@@ -32,3 +33,6 @@ class ChatResponse(BaseModel):
         "This tool provides information extracted from uploaded legal documents "
         "and is not a substitute for formal legal advice from a qualified attorney."
     )
+    request_id: Optional[str] = None
+    telemetry: Optional[ChatTelemetry] = None
+

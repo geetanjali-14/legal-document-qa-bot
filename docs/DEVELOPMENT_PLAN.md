@@ -308,10 +308,11 @@ Phase 9: Production Readiness & Observability
 ### Phase 9: Production Readiness & Observability (P1)
 
 #### Task OPT-017: Token Usage & Cost Observability
-* **Priority:** **P1** | **Status:** PLANNED
-* **Dependencies:** Phase 2
-* **Objective:** Capture input/output token counts, estimated dollar costs, retrieval latencies, and cache hit rates per request.
-* **Acceptance Criteria:** Response headers or structured log records provide complete token and latency telemetry.
+* **Priority:** **P1** | **Status:** COMPLETED
+* **Dependencies:** MVP-001 Baseline
+* **Objective:** Capture input/output token counts, estimated dollar costs, request/retrieval/embedding/LLM latencies, and request identifiers per request.
+* **Acceptance Criteria:** Response headers (X-Request-ID), API telemetry field, and structured log records provide complete token, latency, and cost telemetry.
+
 
 #### Task PROD-001: Production Containerization
 * **Priority:** **P1** | **Status:** PLANNED
@@ -390,7 +391,8 @@ Model Routing (OPT-019) & Provider Fallback (OPT-020)
 | **OPT-014** | Section & Clause-Aware Retrieval | P2 | Phase 4 | PLANNED | `app/services/chunking_service.py` |
 | **OPT-015** | Long Document Hierarchical Strategy | P2 | Phase 4 | PLANNED | `app/services/chunking_service.py` |
 | **OPT-016** | Prompt Injection Defense | P1 | Phase 6 | PLANNED | `app/services/llm_service.py` |
-| **OPT-017** | Token & Cost Telemetry Logging | P1 | Phase 9 | PLANNED | `app/core/logging.py` |
+| **OPT-017** | Token & Cost Telemetry Logging | P1 | Phase 2 | COMPLETED | `app/core/telemetry.py` |
+
 | **OPT-018** | RAG Evaluation Benchmark Suite | P1 | Phase 2 | PLANNED | `tests/evaluation/test_rag_eval.py` |
 | **OPT-019** | Model Routing Strategy | P2 | Phase 7 | OPEN DECISION | `app/services/llm_service.py` |
 | **OPT-020** | Bounded Provider Fallback | P2 | Phase 7 | OPEN DECISION | `app/services/llm_service.py` |

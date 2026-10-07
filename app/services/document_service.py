@@ -1,6 +1,7 @@
 import json
 import uuid
 import re
+import time
 from pathlib import Path
 from typing import List, Optional, Dict
 from app.models.document import DocumentMetadata, DocumentChunk
@@ -10,6 +11,12 @@ from app.services.embedding_service import EmbeddingService
 from app.services.vector_store import VectorStore
 from app.core.config import settings
 from app.core.logging import logger
+from app.core.telemetry import (
+    DocumentProcessingTelemetry,
+    record_document_telemetry,
+    pricing_registry
+)
+
 
 
 class DocumentService:
@@ -75,16 +82,21 @@ class DocumentService:
         with open(saved_path, "wb") as f:
             f.write(file_bytes)
 
+        t_process_start = time.perf_counter()
         try:
             # 1. Extract text and pages
+            t_extract_start = time.perf_counter()
             pages = self.pdf_service.extract_text_and_pages(saved_path)
+            extract_latency_ms = max(0.0, (time.perf_counter() - t_extract_start) * 1000.0)
 
             # 2. Chunk text with section awareness
+            t_chunk_start = time.perf_counter()
             chunks = self.chunking_service.chunk_document(
                 document_id=doc_id,
                 document_name=original_filename,
                 pages=pages
             )
+            chunk_latency_ms = max(0.0, (time.perf_counter() - t_chunk_start) * 1000.0)
 
             if not chunks:
                 raise ValueError("No extractable chunks found in document.")
@@ -95,11 +107,17 @@ class DocumentService:
                 )
 
             # 3. Generate embeddings
+            t_embed_start = time.perf_counter()
             chunk_texts = [c.text for c in chunks]
             embeddings = self.embedding_service.embed_texts(chunk_texts)
+            embed_latency_ms = max(0.0, (time.perf_counter() - t_embed_start) * 1000.0)
 
             # 4. Store in vector database
+            t_index_start = time.perf_counter()
             self.vector_store.add_document(doc_id, chunks, embeddings)
+            index_latency_ms = max(0.0, (time.perf_counter() - t_index_start) * 1000.0)
+
+            total_latency_ms = max(0.0, (time.perf_counter() - t_process_start) * 1000.0)
 
             meta = DocumentMetadata(
                 document_id=doc_id,
@@ -113,7 +131,37 @@ class DocumentService:
             self.documents[doc_id] = meta
             self._save_metadata()
 
-            logger.info(f"Successfully processed document {original_filename} (ID: {doc_id})")
+            # Record document processing telemetry (safe metrics, no raw content)
+            emb_tokens = getattr(self.embedding_service, "last_tokens", None)
+            emb_cost = pricing_registry.calculate_cost(
+                provider=settings.EMBEDDING_PROVIDER,
+                model=settings.EMBEDDING_MODEL,
+                input_tokens=emb_tokens,
+                output_tokens=0
+            )
+
+            doc_telemetry = DocumentProcessingTelemetry(
+                document_id=doc_id,
+                filename=self.sanitize_filename(original_filename),
+                file_size_bytes=len(file_bytes),
+                page_count=len(pages),
+                chunk_count=len(chunks),
+                extraction_latency_ms=round(extract_latency_ms, 2),
+                chunking_latency_ms=round(chunk_latency_ms, 2),
+                embedding_latency_ms=round(embed_latency_ms, 2),
+                indexing_latency_ms=round(index_latency_ms, 2),
+                total_latency_ms=round(total_latency_ms, 2),
+                embedding_provider=settings.EMBEDDING_PROVIDER,
+                embedding_model=settings.EMBEDDING_MODEL,
+                embedding_tokens=emb_tokens,
+                estimated_embedding_cost=emb_cost
+            )
+            record_document_telemetry(doc_telemetry)
+
+            logger.info(
+                f"Successfully processed document {original_filename} (ID: {doc_id}) "
+                f"in {total_latency_ms:.2f}ms [pages={len(pages)}, chunks={len(chunks)}]"
+            )
             return meta
 
         except Exception as e:

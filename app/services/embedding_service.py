@@ -83,12 +83,16 @@ class TFIDFEmbeddingProvider(BaseEmbeddingProvider):
         return sparse_vec.toarray().astype(np.float32)
 
 
+import time
+
+
 class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
     """OpenAI API embedding provider (e.g. text-embedding-3-small)."""
     def __init__(self, api_key: str, model: str = "text-embedding-3-small", base_url: str = ""):
         self.api_key = api_key
         self.model = model
         self.base_url = (base_url or "https://api.openai.com/v1").rstrip("/") + "/embeddings"
+        self.last_tokens: Optional[int] = None
 
     def embed_texts(self, texts: List[str]) -> np.ndarray:
         headers = {
@@ -102,7 +106,10 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(self.base_url, json=payload, headers=headers)
             resp.raise_for_status()
-            data = resp.json()["data"]
+            res_json = resp.json()
+            data = res_json["data"]
+            usage = res_json.get("usage", {})
+            self.last_tokens = usage.get("prompt_tokens") or usage.get("total_tokens")
             embeddings = [item["embedding"] for item in data]
             return np.array(embeddings, dtype=np.float32)
 
@@ -112,7 +119,11 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
 
 class EmbeddingService:
     def __init__(self):
+        self.provider_name = settings.EMBEDDING_PROVIDER
+        self.model_name = settings.EMBEDDING_MODEL
         self.provider = self._resolve_provider()
+        self.last_latency_ms: float = 0.0
+        self.last_tokens: Optional[int] = None
 
     def _resolve_provider(self) -> BaseEmbeddingProvider:
         provider_name = settings.EMBEDDING_PROVIDER.lower()
@@ -133,7 +144,16 @@ class EmbeddingService:
             return TFIDFEmbeddingProvider()
 
     def embed_texts(self, texts: List[str]) -> np.ndarray:
-        return self.provider.embed_texts(texts)
+        t_start = time.perf_counter()
+        result = self.provider.embed_texts(texts)
+        self.last_latency_ms = max(0.0, (time.perf_counter() - t_start) * 1000.0)
+        self.last_tokens = getattr(self.provider, "last_tokens", None)
+        return result
 
     def embed_query(self, query: str) -> np.ndarray:
-        return self.provider.embed_query(query)
+        t_start = time.perf_counter()
+        result = self.provider.embed_query(query)
+        self.last_latency_ms = max(0.0, (time.perf_counter() - t_start) * 1000.0)
+        self.last_tokens = getattr(self.provider, "last_tokens", None)
+        return result
+
