@@ -403,6 +403,46 @@ input {
   margin-top: 4px;
 }
 
+.doc-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.view-btn,
+.secondary-action {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  color: var(--ink-700);
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.15s ease;
+}
+
+.view-btn {
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.secondary-action {
+  padding: 8px 12px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.view-btn:hover,
+.secondary-action:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.28);
+}
+
+.secondary-action:disabled,
+.view-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .del-btn {
   background: rgba(148, 163, 184, 0.08);
   border: 1px solid var(--border-subtle);
@@ -417,6 +457,12 @@ input {
   color: var(--error-700);
   border-color: rgba(185, 28, 28, 0.24);
   background: rgba(254, 226, 226, 0.38);
+}
+
+.banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 /* Chat Main */

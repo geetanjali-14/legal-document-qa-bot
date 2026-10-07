@@ -24,6 +24,7 @@ const readinessChunks = document.getElementById("readinessChunks");
 const indexedCount = document.getElementById("indexedCount");
 const uploadDialog = document.getElementById("uploadDialog");
 const uploadOpenBtn = document.getElementById("uploadOpenBtn");
+const viewActiveDocBtn = document.getElementById("viewActiveDocBtn");
 const sourceInspector = document.getElementById("sourceInspector");
 const sourceDocumentName = document.getElementById("sourceDocumentName");
 const sourceLocation = document.getElementById("sourceLocation");
@@ -39,6 +40,10 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 uploadOpenBtn.addEventListener("click", () => uploadDialog.showModal());
+viewActiveDocBtn.addEventListener("click", () => {
+  if (!activeDocumentId) return;
+  openDocumentViewer(activeDocumentId);
+});
 
 sidebarToggle.addEventListener("click", () => {
   if (mainLayout.classList.contains("sidebar-open")) {
@@ -254,6 +259,19 @@ function renderDocumentsList(docs) {
     selectButton.addEventListener("click", select);
     selectButton.appendChild(details);
 
+    const actions = document.createElement("div");
+    actions.className = "doc-item-actions";
+
+    const viewButton = document.createElement("button");
+    viewButton.className = "view-btn";
+    viewButton.type = "button";
+    viewButton.textContent = "View";
+    viewButton.title = "Open document PDF";
+    viewButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openDocumentViewer(doc.document_id);
+    });
+
     const deleteButton = document.createElement("button");
     deleteButton.className = "del-btn";
     deleteButton.type = "button";
@@ -262,10 +280,16 @@ function renderDocumentsList(docs) {
     deleteButton.textContent = "×";
     deleteButton.addEventListener("click", (event) => deleteDocument(event, doc.document_id));
 
-    item.append(selectButton, deleteButton);
+    actions.append(viewButton, deleteButton);
+    item.append(selectButton, actions);
     return item;
   });
   documentsList.replaceChildren(...documentItems);
+}
+
+function openDocumentViewer(documentId) {
+  if (!documentId) return;
+  window.open(`/api/documents/${documentId}/file`, "_blank", "noopener,noreferrer");
 }
 
 function selectDocument(id, name, pages, chunks) {
@@ -287,6 +311,7 @@ function selectDocument(id, name, pages, chunks) {
   readinessChunks.textContent = String(chunks);
   questionInput.disabled = false;
   sendBtn.disabled = false;
+  viewActiveDocBtn.disabled = false;
   questionInput.placeholder = "Ask a question about this legal document...";
   document.querySelectorAll(".question-suggestion").forEach((suggestion) => {
     suggestion.disabled = false;
@@ -329,6 +354,7 @@ async function deleteDocument(event, id) {
         readinessChunks.textContent = "—";
         questionInput.disabled = true;
         sendBtn.disabled = true;
+        viewActiveDocBtn.disabled = true;
         questionInput.placeholder = "Select a document first to ask questions...";
         document.querySelectorAll(".question-suggestion").forEach((suggestion) => {
           suggestion.disabled = true;

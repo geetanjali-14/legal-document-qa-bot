@@ -1,5 +1,6 @@
 from typing import List
 from fastapi import APIRouter, UploadFile, File, HTTPException, status, Depends
+from fastapi.responses import FileResponse
 from app.models.response import ApiResponse
 from app.models.document import DocumentMetadata
 from app.services.document_service import DocumentService
@@ -99,6 +100,30 @@ async def get_document(document_id: str, doc_service: DocumentService = Depends(
         success=True,
         message="Document details retrieved.",
         data=doc.model_dump(mode="json")
+    )
+
+
+@router.get("/{document_id}/file")
+async def get_document_file(document_id: str, doc_service: DocumentService = Depends(get_document_service)):
+    doc = doc_service.get_document(document_id)
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document with ID {document_id} was not found."
+        )
+
+    file_path = doc_service.upload_dir / doc.filename
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Stored PDF for document {document_id} was not found."
+        )
+
+    return FileResponse(
+        path=str(file_path),
+        media_type="application/pdf",
+        filename=doc.original_filename,
+        headers={"Content-Disposition": f"inline; filename=\"{doc.original_filename}\""}
     )
 
 
