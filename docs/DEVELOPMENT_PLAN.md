@@ -13,7 +13,13 @@
 This document outlines the phased engineering roadmap for stabilizing, enhancing, and preparing the **Legal Document Q&A Assistant** for production.
 
 > [!IMPORTANT]
-> **MVP-001 Is COMPLETE:** Phase 0 (Planning) and Phase 1 (MVP-001 Stabilization) are completed. The current verified full-suite baseline is 63 passed, 1 warning, 0 failed (`PYTHONPATH=. ./venv/bin/pytest`).
+> **MVP-001 Baseline Is COMPLETE:** Phase 0 (Planning) and Phase 1 (MVP-001 Stabilization) are completed. The current verified full-suite baseline is 93 passed, 1 warning, 0 failed (`PYTHONPATH=. ./venv/bin/pytest`).
+> 
+> **Offline Evaluation Benchmark (OPT-018):** 16/16 test cases passed (100.0%) using `PYTHONPATH=. ./venv/bin/python tests/evaluation/run_benchmark.py`.
+> 
+> **Compound Query Partial Answerability (UNANS-005):** Operational and covered by dedicated unit tests.
+> 
+> **Frontend Status:** Modernization is actively progressing in a separate parallel workstream; backend API contracts remain stable.
 > 
 > **Implementation Scope Rule:** This document governs planning only. No application source code, tests, dependencies, or environment configurations are modified during this documentation update.
 
@@ -47,21 +53,23 @@ until measured user volume, dataset scale, or operational necessity explicitly j
 ## 2. Current Test Baseline
 
 * **Test Framework:** `pytest` 9.1.1, Python 3.12.3
-* **Current total automated tests:** 63
-* **Passing:** 63
+* **Current total automated tests:** 93
+* **Passing:** 93
 * **Warnings:** 1 Starlette deprecation warning from the installed TestClient/httpx combination
 * **Failed:** 0
 * **Execution Command:** `PYTHONPATH=. ./venv/bin/pytest`
+* **Offline RAG Benchmark:** 16/16 passed (100.0%) across direct facts, multi-clause context, unanswerable questions, adversarial queries, citation integrity, and retrieval.
 * **Verified Behaviors:**
   1. `test_health_endpoint`: Health diagnostics and active provider reporting return HTTP 200.
   2. `test_reject_invalid_file_extension`: Uploading `.exe` rejected with HTTP 400.
   3. `test_reject_non_pdf_content`: Uploading invalid file with `.pdf` extension rejected by magic byte `%PDF` validation with HTTP 400.
-  4. `test_end_to_end_legal_rag_flow`:
-     * Uploads 3-page synthetic legal contract (`documents/synthetic_contract.pdf`).
-     * Successfully answers termination notice period query (`"30 days"` found, Page 1, Section 2).
-     * Successfully answers governing law query (`"Delaware"` found, Page 3, Section 7).
-     * Correctly refuses out-of-document query (SpaceX rocket protocol) with `"couldn't find enough information"`, confidence `insufficient_context`, and 0 citations.
-     * Deletes document and cleans up files and vector indexes.
+  4. `test_duplicate_detection`: Identical file uploads reuse existing indexed documents via SHA-256 byte hashing (OPT-001).
+  5. `test_dense_embeddings`: FastEmbed integration, 384-dimensional dense vectors, and compatibility sidecars verified (OPT-008).
+  6. `test_confidence_gate`: Semantic confidence gate verifies dual-threshold behavior (`score >= 0.35` or `overlap >= 0.35`), suppresses LLM invocation on weak evidence, and clears citations (OPT-003).
+  7. `test_compound_query`: Deterministic query decomposition, independent sub-question evaluation, and partial answerability verified (UNANS-005).
+  8. `test_resource_limits`: File size, page, chunk, query char, top-K, context char, and prompt token limits verified with rollback cleanup (OPT-021).
+  9. `test_telemetry`: Latency tracking, token accounting, and cost calculations verified (OPT-017).
+  10. `test_end_to_end_legal_rag_flow`: Full contract lifecycle from ingestion to deletion.
 
 ---
 
@@ -75,28 +83,28 @@ Phase 1: MVP-001 Stabilization
 [STATUS: COMPLETED]
    ↓
 Phase 2: Foundational RAG Quality & Efficiency
-[STATUS: ACTIVE P1; OPT-001 / OPT-008 COMPLETED; OPT-018 NEXT]
-   ↓
-Phase 3: Conversational Retrieval & Contextualization
-[STATUS: PLANNED (P1)]
-   ↓
-Phase 4: Document Processing Optimization & OCR
-[STATUS: PLANNED (P2)]
-   ↓
-Phase 5: Persistence & Data Integrity
-[STATUS: PLANNED (P2)]
+[STATUS: COMPLETED: OPT-001, OPT-003, OPT-008, OPT-018, UNANS-005; REMAINING: OPT-004, OPT-005]
    ↓
 Phase 6: Security & Access Control
-[STATUS: PLANNED (P1)]
+[STATUS: ACTIVE P0: OPT-016 NEXT; OPT-021 COMPLETED; SEC-001 PLANNED]
+   ↓
+Phase 3: Conversational Retrieval & Contextualization
+[STATUS: PLANNED (P1): OPT-006, OPT-007]
+   ↓
+Phase 4: Document Processing Optimization & OCR
+[STATUS: PLANNED (P2): OPT-002, OPT-010, OPT-014, OPT-015, DOC-001]
+   ↓
+Phase 5: Persistence & Data Integrity
+[STATUS: PLANNED (P2/P3): OPT-011, OPT-012, OPT-022, DB-001]
    ↓
 Phase 7: Provider & Model Optimization
-[STATUS: PLANNED (P2)]
+[STATUS: PLANNED (P2): OPT-019, OPT-020]
    ↓
 Phase 8: Advanced Legal Features
-[STATUS: FUTURE (P3)]
+[STATUS: FUTURE (P3): FEAT-001, FEAT-002]
    ↓
 Phase 9: Production Readiness & Observability
-[STATUS: OPT-017 COMPLETED; PROD-001 PLANNED (P1)]
+[STATUS: OPT-017 COMPLETED; PROD-001 PLANNED (P3)]
 ```
 
 ---
@@ -117,14 +125,14 @@ Phase 9: Production Readiness & Observability
   * **Fix 3 (Section Association):** Fixed `ChunkingService` state tracking so chunks inherit their parent section title rather than reverting to generic placeholders.
   * **Fix 4 (Mock LLM Regex Boundary):** Upgraded `MockLLMProvider` sentence-splitting regex to prevent splitting on numbers or abbreviations (preserving `"30 days"`).
   * **Fix 5 (Keyword Overlap Scoring):** Improved mock ranking to ensure the most relevant legal sentence is selected for output generation.
-   * **Historical verification at MVP-001 sign-off:** 11/11 passing. The current repository-wide baseline is 63 passing, 1 warning.
+  * **Verification:** Full test suite verified at 93 passed.
 
 ---
 
 ### Phase 2: Foundational RAG Quality & Efficiency (P1)
 
 #### Task OPT-001: Duplicate Document Detection
-* **Priority:** **P1** | **Status:** COMPLETED
+* **Priority:** **P1** | **Status:** **COMPLETED**
 * **Dependencies:** MVP-001
 * **Objective:** Prevent redundant extraction, chunking, embedding, and indexing of identical files based on raw byte SHA-256 content hash.
 * **Implementation:**
@@ -134,16 +142,28 @@ Phase 9: Production Readiness & Observability
   * Store `content_hash` in `DocumentMetadata` and support safe backfill for historical records.
 * **Acceptance Criteria:** Uploading identical PDF under any filename returns immediately without generating new `.npy` vectors, calling embedding provider, or duplicating metadata records.
 
-
 #### Task OPT-003: "No Evidence = No LLM" Gate Enhancement
-* **Priority:** **P1** | **Status:** PLANNED
+* **Priority:** **P1** | **Status:** **COMPLETED**
 * **Dependencies:** MVP-001
-* **Dependency decision:** A former dependency diagram placed OPT-013 before this task, but the task definition does not. Whether OPT-013 is a prerequisite remains an **OPEN DECISION**; the current diagram does not assert that edge.
 * **Objective:** Guarantee that queries with insufficient evidence never consume LLM prompt tokens.
 * **Implementation:**
-  * Formalize `RELEVANCE_CONFIDENCE_THRESHOLD` in `RetrievalService`.
-  * If top chunk similarity is below threshold, return standard refusal with 0 citations and bypass LLM call entirely.
-* **Acceptance Criteria:** Out-of-domain questions consume exactly 0 LLM tokens and log status `REJECTION_INSUFFICIENT_EVIDENCE`.
+  * Formalized semantic evidence gate in `RetrievalService.is_context_relevant`.
+  * Evaluates query content words against candidate chunks; passes when `top_score >= settings.RELEVANCE_CONFIDENCE_THRESHOLD` (0.35) with at least 1 content word match, or `top_score >= settings.SIMILARITY_THRESHOLD` (0.10) with content word overlap ratio $\ge 0.35$ (`settings.MIN_CONTENT_WORD_OVERLAP`).
+  * If top chunk similarity fails threshold or yields zero content relevance, `RetrievalService` yields empty results.
+  * `routes_chat.py` returns deterministic refusal ("I couldn't find enough information in the uploaded document to answer this question."), sets confidence `insufficient_context`, clears citations, and bypasses the LLM call entirely.
+* **Acceptance Criteria:** Out-of-domain questions consume exactly 0 LLM tokens and log status `insufficient_context`.
+
+#### Task UNANS-005: Compound Query Partial Answerability
+* **Priority:** **P1** | **Status:** **COMPLETED**
+* **Dependencies:** MVP-001, OPT-003
+* **Objective:** Reliably answer multi-part legal questions without allowing an unanswerable clause to trigger total refusal or an answerable clause to fabricate missing citations.
+* **Implementation:**
+  * Added deterministic query decomposition in `app/services/query_service.py` (`decompose_query`, `clean_subquery_topic`) for multiple question marks, semicolons, conjunction clauses, and lists.
+  * Evaluates each sub-question independently in `routes_chat.py`.
+  * Classifies query status into `supported`, `partially_supported`, or `insufficient_context`.
+  * Synthesizes partial answers: invokes LLM only on supported sub-questions and appends clean missing-clause notes for unsupported components (e.g. *"Severance payment amount: not found in the provided document."*).
+  * Citations are strictly associated with supported chunks.
+* **Acceptance Criteria:** Compound queries return partial answers when appropriate; unsupported components are explicitly identified with zero fabricated citations; 10 targeted tests passing in `tests/unit/test_compound_query.py`.
 
 #### Task OPT-004: Adaptive Retrieval Top-K
 * **Priority:** **P1** | **Status:** PLANNED
@@ -352,68 +372,69 @@ Phase 9: Production Readiness & Observability
 
 ---
 
-## 5. Dependency Architecture
+## 5. Dependency Architecture & Implementation Roadmap
 
 The execution ordering of optimization tasks follows strict dependency constraints:
 
 ```text
 Document Hashing (SHA-256)
         ↓
-Duplicate Detection (OPT-001)
+Duplicate Detection (OPT-001) [COMPLETED]
         ↓
-Document / Version Identity (OPT-022)
+Document / Version Identity (OPT-022) [PLANNED]
         ↓
-Processing Cache (OPT-010)
+Processing Cache (OPT-010) [PLANNED]
         ↓
-Embedding Cache (OPT-009)
+Embedding Cache (OPT-009) [PLANNED]
         ↓
-Retrieval Cache (OPT-011) & Answer Cache (OPT-012)
+Retrieval Cache (OPT-011) & Answer Cache (OPT-012) [PLANNED]
 ```
 
 ```text
-Relevance Threshold & Evidence Gate (OPT-003)
-   ↓
-Adaptive Top-K (OPT-004) & Context Deduplication (OPT-005)
-   ↓
-Prompt Injection Protection (OPT-016)
-   ↓
-Token-Efficient LLM Synthesis
-```
-
-Retrieval foundations: OPT-008 is **COMPLETED**. OPT-013 is an **OPEN DECISION**. The task definition lists MVP-001 as OPT-003's dependency; whether OPT-013 must precede OPT-003 is **OPEN DECISION**, not a confirmed dependency.
-
-```text
-Conversation History Tracking
+Dense Embeddings (OPT-008) [COMPLETED]
         ↓
-Query Contextualization (OPT-006)
+Semantic Confidence Gate (OPT-003) [COMPLETED]
         ↓
-Bounded History Sliding Window (OPT-007)
+Compound Query Partial Answerability (UNANS-005) [COMPLETED]
+        ↓
+Prompt Injection Protection & Evidentiary Delimitation (OPT-016) [NEXT P0]
+        ↓
+Adaptive Top-K (OPT-004) & Context Deduplication (OPT-005) [P1]
 ```
 
 ```text
-Token & Cost Telemetry (OPT-017)
+Conversation History Tracking (Partial MVP Baseline)
         ↓
-RAG Evaluation Benchmark Suite (OPT-018)
+Query Contextualization (OPT-006) [P1]
+        ↓
+Bounded History Sliding Window (OPT-007) [P1]
+```
+
+```text
+Token & Cost Telemetry (OPT-017) [COMPLETED]
+        ↓
+RAG Evaluation Benchmark Suite (OPT-018) [COMPLETED - 16/16 passed]
         ↓
 Cost Optimization Profiling
         ↓
-Model Routing (OPT-019) & Provider Fallback (OPT-020)
+Model Routing (OPT-019) & Provider Fallback (OPT-020) [P2]
 ```
 
 ---
 
-## 6. Optimization Task Catalog (OPT-001 to OPT-022)
+## 6. Optimization Task Catalog
 
 | Task ID | Task Name | Priority | Phase | Status | Primary File Affected |
-| **OPT-001** | Duplicate Document Detection | P1 | Phase 2 | COMPLETED | `app/services/document_service.py` |
-
-| **OPT-002** | Deterministic Question Routing | P1 | Phase 4 | PLANNED | `app/api/routes_chat.py` |
-| **OPT-003** | No-Evidence = No-LLM Gate | P1 | Phase 2 | PLANNED | `app/services/retrieval_service.py` |
+|---|---|---|---|---|---|
+| **OPT-001** | Duplicate Document Detection | P1 | Phase 2 | **COMPLETED** | `app/services/document_service.py` |
+| **OPT-002** | Deterministic Question Routing | P2 | Phase 4 | PLANNED | `app/api/routes_chat.py` |
+| **OPT-003** | No-Evidence = No-LLM Gate | P1 | Phase 2 | **COMPLETED** | `app/services/retrieval_service.py` |
+| **UNANS-005** | Compound Query Partial Answerability | P1 | Phase 2 | **COMPLETED** | `app/services/query_service.py` |
 | **OPT-004** | Adaptive Retrieval Top-K | P1 | Phase 2 | PLANNED | `app/services/retrieval_service.py` |
 | **OPT-005** | Context Deduplication & Overlap Pruning | P1 | Phase 2 | PLANNED | `app/services/citation_service.py` |
 | **OPT-006** | Query Contextualization Engine | P1 | Phase 3 | PLANNED | `app/services/llm_service.py` |
 | **OPT-007** | Conversation History Optimization | P1 | Phase 3 | PLANNED | `app/api/routes_chat.py` |
-| **OPT-008** | Dense Local Embedding Integration | P1 | Phase 2 | COMPLETED | `app/services/embedding_service.py` |
+| **OPT-008** | Dense Local Embedding Integration | P1 | Phase 2 | **COMPLETED** | `app/services/embedding_service.py` |
 | **OPT-009** | Embedding Cache | P2 | Phase 4 | PLANNED | `app/services/embedding_service.py` |
 | **OPT-010** | Document Processing Cache | P2 | Phase 4 | PLANNED | `app/services/pdf_service.py` |
 | **OPT-011** | Retrieval Cache | P2 | Phase 5 | PLANNED | `app/services/retrieval_service.py` |
@@ -421,14 +442,17 @@ Model Routing (OPT-019) & Provider Fallback (OPT-020)
 | **OPT-013** | Hybrid Lexical / Dense Retrieval | P2 | Phase 2 | OPEN DECISION | `app/services/retrieval_service.py` |
 | **OPT-014** | Section & Clause-Aware Retrieval | P2 | Phase 4 | PLANNED | `app/services/chunking_service.py` |
 | **OPT-015** | Long Document Hierarchical Strategy | P2 | Phase 4 | PLANNED | `app/services/chunking_service.py` |
-| **OPT-016** | Prompt Injection Defense | P1 | Phase 6 | PLANNED | `app/services/llm_service.py` |
-| **OPT-017** | Token & Cost Telemetry Logging | P1 | Phase 9 | COMPLETED | `app/core/telemetry.py` |
-
-| **OPT-018** | RAG Evaluation Benchmark Suite | P1 | Phase 2 | COMPLETED | `tests/evaluation/test_rag_eval.py` |
+| **OPT-016** | Prompt Injection Defense & Evidentiary Delimitation | P0 | Phase 6 | **NEXT** | `app/services/llm_service.py` |
+| **OPT-017** | Token & Cost Telemetry Logging | P1 | Phase 9 | **COMPLETED** | `app/core/telemetry.py` |
+| **OPT-018** | RAG Evaluation Benchmark Suite | P1 | Phase 2 | **COMPLETED** | `tests/evaluation/test_rag_eval.py` |
 | **OPT-019** | Model Routing Strategy | P2 | Phase 7 | OPEN DECISION | `app/services/llm_service.py` |
 | **OPT-020** | Bounded Provider Fallback | P2 | Phase 7 | OPEN DECISION | `app/services/llm_service.py` |
-| **OPT-021** | Hard Resource Limits Configuration | P1 | Phase 6 | COMPLETED | `app/core/config.py` |
+| **OPT-021** | Hard Resource Limits Configuration | P1 | Phase 6 | **COMPLETED** | `app/core/config.py` |
 | **OPT-022** | Document Versioning & Isolation | P2 | Phase 5 | PLANNED | `app/services/document_service.py` |
+| **DB-001** | Persistent Metadata Store | P3 | Phase 5 | PLANNED | `app/services/document_service.py` |
+| **DOC-001** | Selective OCR Ingestion | P3 | Phase 4 | PLANNED | `app/services/pdf_service.py` |
+| **SEC-001** | Rate Limiting & Sensitive Data Redaction | P3 | Phase 6 | PLANNED | `app/core/logging.py` |
+| **PROD-001** | Production Containerization (Docker) | P3 | Phase 9 | PLANNED | `Dockerfile` |
 
 ---
 
@@ -474,7 +498,8 @@ Model Routing (OPT-019) & Provider Fallback (OPT-020)
 |---|---|---|---|---|
 | **Duplicate Avoidance** | Document Identity / Hasher | `OPT-001` | **COMPLETED** | Upload identical file under another filename; verify reuse and no re-indexing. |
 | **Metadata Short-Circuit** | Question Router | `OPT-002` | **PLANNED** | Ask page count; verify 0 LLM calls. |
-| **Enhanced Evidence Gate** | Evidence Gate | `OPT-003` | **PLANNED; OPT-013 relation OPEN DECISION** | Test insufficient-but-nonempty evidence; verify refusal and 0 citations. |
+| **Enhanced Evidence Gate** | Evidence Gate | `OPT-003` | **COMPLETED** | Verified in `test_confidence_gate.py`; dual threshold rejects low-evidence queries with 0 LLM calls. |
+| **Compound Query Partial Answers** | Query Splitter / Coordinator | `UNANS-005` | **COMPLETED** | Verified in `test_compound_query.py`; sub-questions evaluated independently with partial answers and no hallucinated citations. |
 | **Lower Token Usage** | Context Optimizer | `OPT-004`, `OPT-005` | **PLANNED** | Measure context tokens and answer quality. |
 | **Follow-Up Questions** | Query Contextualizer | `OPT-006`, `OPT-007` | **PLANNED** | Multi-turn tests with pronoun questions and bounded history. |
 | **Semantic Synonym Search** | Dense Embedding Provider | `OPT-008` | **COMPLETED** | Synonym, latency, persistence, compatibility, and dimension tests. |
@@ -483,7 +508,7 @@ Model Routing (OPT-019) & Provider Fallback (OPT-020)
 | **Ingestion Efficiency** | Processing Cache | `OPT-010` | **PLANNED** | Re-process; verify extraction is reused. |
 | **Rapid Q&A Hits** | Answer Cache | `OPT-012` | **PLANNED** | Repeat query; verify answer cache hit and zero embedding/LLM use. |
 | **Legal Structure Integrity** | Clause Parser | `OPT-014` | **PLANNED** | Verify nested clause hierarchy in chunk metadata. |
-| **Prompt Injection Defense** | LLM Guard / Demarcator | `OPT-016` | **PLANNED** | Adversarial document-injection evaluation. |
+| **Prompt Injection Defense** | LLM Guard / Demarcator | `OPT-016` | **NEXT (P0)** | Adversarial document-injection evaluation with XML data fencing. |
 | **Cost & Token Visibility** | Observability Logger | `OPT-017` | **COMPLETED** | Inspect telemetry; distinguish actual and estimated usage. |
-| **RAG Grounding Assurance** | Evaluation Suite | `OPT-018` | **NEXT** | Repeatable evaluation of grounded answers, refusals, citations, retrieval, tokens, cost, and latency. |
+| **RAG Grounding Assurance** | Evaluation Suite | `OPT-018` | **COMPLETED** | 16/16 benchmark cases passed across 6 categories in `run_benchmark.py`. |
 | **Resource Abuse Protection** | Limits Enforcer | `OPT-021` | **COMPLETED** | Boundary and rejection tests for configured resource limits. |

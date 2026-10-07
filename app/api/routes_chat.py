@@ -104,15 +104,99 @@ async def ask_question(
             detail=f"Document with ID {request.document_id} was not found."
         )
 
-    # 5. Retrieve relevant chunks
-    try:
-        retrieved_results = retrieval_service.retrieve(
+    from app.services.query_service import decompose_query, clean_subquery_topic
+
+    # 5. Compound query analysis & sub-question decomposition
+    sub_questions = decompose_query(request.question)
+    is_compound = len(sub_questions) > 1
+
+    # Extract corpus vocabulary for document-level grounding check if vector_store has chunks_by_doc
+    chunks_map = getattr(retrieval_service.vector_store, "chunks_by_doc", None)
+    doc_chunks_all = chunks_map.get(request.document_id, []) if isinstance(chunks_map, dict) else []
+    doc_vocab = set()
+    for dc in doc_chunks_all:
+        doc_vocab.update(retrieval_service.extract_content_words(dc.text))
+        if dc.section:
+            doc_vocab.update(retrieval_service.extract_content_words(dc.section))
+
+    def evaluate_subquestion_support(sub_q: str):
+        qw = retrieval_service.extract_content_words(sub_q)
+        # If specific content words in sub-question are completely absent from document
+        if qw and (qw - doc_vocab):
+            return False, []
+
+        res = retrieval_service.retrieve(
             document_id=request.document_id,
-            query=request.question,
+            query=sub_q,
             top_k=request.top_k
         )
-        retrieval_latency_ms = getattr(retrieval_service, "last_retrieval_latency_ms", 0.0)
-        embedding_latency_ms = getattr(retrieval_service, "last_embedding_latency_ms", 0.0)
+        if not res:
+            return False, []
+        if not qw:
+            return True, res
+
+        valid_chunks = []
+        for chk, sc in res:
+            cw = retrieval_service.extract_content_words(chk.text)
+            if chk.section:
+                cw.update(retrieval_service.extract_content_words(chk.section))
+            mat = qw & cw
+            if (len(mat) / len(qw)) >= settings.MIN_CONTENT_WORD_OVERLAP or sc >= settings.RELEVANCE_CONFIDENCE_THRESHOLD:
+                valid_chunks.append((chk, sc))
+
+        if not valid_chunks:
+            return False, []
+        return True, valid_chunks
+
+    retrieval_latency_ms = 0.0
+    embedding_latency_ms = 0.0
+
+    try:
+        if is_compound:
+            sub_evaluations = []
+            for sq in sub_questions:
+                is_sup, sq_chunks = evaluate_subquestion_support(sq)
+                retrieval_latency_ms += getattr(retrieval_service, "last_retrieval_latency_ms", 0.0)
+                embedding_latency_ms += getattr(retrieval_service, "last_embedding_latency_ms", 0.0)
+                sub_evaluations.append((sq, is_sup, sq_chunks))
+
+            supported_subs = [(sq, chks) for sq, is_sup, chks in sub_evaluations if is_sup]
+            unsupported_subs = [sq for sq, is_sup, _ in sub_evaluations if not is_sup]
+
+            if not supported_subs:
+                overall_status = "insufficient_context"
+                retrieved_results = []
+            elif not unsupported_subs:
+                overall_status = "supported"
+                seen_chunk_ids = set()
+                combined_chunks = []
+                for _, chks in supported_subs:
+                    for chk, sc in chks:
+                        if chk.chunk_id not in seen_chunk_ids:
+                            seen_chunk_ids.add(chk.chunk_id)
+                            combined_chunks.append((chk, sc))
+                retrieved_results = combined_chunks
+            else:
+                overall_status = "partially_supported"
+                seen_chunk_ids = set()
+                combined_chunks = []
+                for _, chks in supported_subs:
+                    for chk, sc in chks:
+                        if chk.chunk_id not in seen_chunk_ids:
+                            seen_chunk_ids.add(chk.chunk_id)
+                            combined_chunks.append((chk, sc))
+                retrieved_results = combined_chunks
+        else:
+            retrieved_results = retrieval_service.retrieve(
+                document_id=request.document_id,
+                query=request.question,
+                top_k=request.top_k
+            )
+            retrieval_latency_ms = getattr(retrieval_service, "last_retrieval_latency_ms", 0.0)
+            embedding_latency_ms = getattr(retrieval_service, "last_embedding_latency_ms", 0.0)
+            overall_status = "supported" if retrieved_results else "insufficient_context"
+            supported_subs = [(request.question, retrieved_results)] if retrieved_results else []
+            unsupported_subs = [] if retrieved_results else [request.question]
     except EmbeddingDimensionMismatchError as dim_err:
         logger.error(f"[{request_id}] Embedding dimension mismatch: {str(dim_err)}")
         raise HTTPException(
@@ -127,8 +211,8 @@ async def ask_question(
             detail="Error retrieving relevant document passages."
         )
 
-    # If no chunks passed similarity threshold
-    if not retrieved_results:
+    # If no chunks passed similarity / support evaluation
+    if not retrieved_results or overall_status == "insufficient_context":
         total_latency_ms = max(0.0, (time.perf_counter() - t_request_start) * 1000.0)
         telemetry = ChatTelemetry(
             request_id=request_id,
@@ -193,20 +277,94 @@ async def ask_question(
     # 7. Create verifiable citations
     citations = citation_service.create_citations(retrieved_results)
 
-    # 8. Format context for LLM
-    context_chunks = [
-        f"[Section: {chunk.section} | Page: {chunk.page_number}]\n{chunk.text}"
-        for chunk, _ in retrieved_results
-    ]
-
-    # 9. Generate grounded response with bounded prompt token budget
+    # 8. Generate grounded response with bounded prompt token budget
     t_llm_call_start = time.perf_counter()
     try:
-        llm_result = llm_service.generate_answer(
-            question=request.question,
-            context_chunks=context_chunks,
-            history=request.history
-        )
+        if is_compound and overall_status == "partially_supported":
+            # Generate answer for supported components only
+            supported_answers = []
+            sub_llm_responses = []
+            for sq, sq_chunks in supported_subs:
+                sq_context = [
+                    f"[Section: {chunk.section} | Page: {chunk.page_number}]\n{chunk.text}"
+                    for chunk, _ in sq_chunks
+                ]
+                sub_res = llm_service.generate_answer(
+                    question=sq,
+                    context_chunks=sq_context,
+                    history=request.history
+                )
+                sub_llm_responses.append(sub_res)
+                sub_text = sub_res.content if isinstance(sub_res, LLMResponse) else str(sub_res)
+                supported_answers.append(sub_text)
+
+            unsupported_notes = [
+                f"{clean_subquery_topic(un_sq)}: not found in the provided document."
+                for un_sq in unsupported_subs
+            ]
+
+            full_answer_parts = supported_answers + unsupported_notes
+            answer_text = "\n\n".join(full_answer_parts)
+
+            # Aggregate telemetry tokens/latencies across sub-calls
+            measured_llm_latency_ms = max(0.0, (time.perf_counter() - t_llm_call_start) * 1000.0)
+            llm_latency_ms = sum(getattr(r, "latency_ms", 0.0) for r in sub_llm_responses) or measured_llm_latency_ms
+            input_tokens = sum(r.input_tokens for r in sub_llm_responses if r.input_tokens is not None) if all(r.input_tokens is not None for r in sub_llm_responses) else None
+            output_tokens = sum(r.output_tokens for r in sub_llm_responses if r.output_tokens is not None) if all(r.output_tokens is not None for r in sub_llm_responses) else None
+            total_tokens = sum(r.total_tokens for r in sub_llm_responses if r.total_tokens is not None) if all(r.total_tokens is not None for r in sub_llm_responses) else None
+            token_usage_type = sub_llm_responses[0].token_usage_type if sub_llm_responses else "estimated"
+            est_input_tokens = sum(r.estimated_input_tokens or 0 for r in sub_llm_responses) or None
+            est_output_tokens = sum(r.estimated_output_tokens or 0 for r in sub_llm_responses) or None
+            est_total_tokens = ((est_input_tokens or 0) + (est_output_tokens or 0)) if (est_input_tokens or est_output_tokens) else None
+            est_method = sub_llm_responses[0].estimation_method if sub_llm_responses else None
+            llm_provider = sub_llm_responses[0].provider if sub_llm_responses else settings.LLM_PROVIDER
+            llm_model = sub_llm_responses[0].model if sub_llm_responses else settings.LLM_MODEL
+            confidence = "partially_supported"
+
+        else:
+            context_chunks = [
+                f"[Section: {chunk.section} | Page: {chunk.page_number}]\n{chunk.text}"
+                for chunk, _ in retrieved_results
+            ]
+            llm_result = llm_service.generate_answer(
+                question=request.question,
+                context_chunks=context_chunks,
+                history=request.history
+            )
+            measured_llm_latency_ms = max(0.0, (time.perf_counter() - t_llm_call_start) * 1000.0)
+
+            if isinstance(llm_result, LLMResponse):
+                answer_text = llm_result.content
+                llm_latency_ms = llm_result.latency_ms if llm_result.latency_ms > 0 else measured_llm_latency_ms
+                input_tokens = llm_result.input_tokens
+                output_tokens = llm_result.output_tokens
+                total_tokens = llm_result.total_tokens
+                token_usage_type = llm_result.token_usage_type
+                est_input_tokens = llm_result.estimated_input_tokens
+                est_output_tokens = llm_result.estimated_output_tokens
+                est_total_tokens = llm_result.estimated_total_tokens
+                est_method = llm_result.estimation_method
+                llm_provider = llm_result.provider or settings.LLM_PROVIDER
+                llm_model = llm_result.model or settings.LLM_MODEL
+            else:
+                answer_text = str(llm_result)
+                llm_latency_ms = measured_llm_latency_ms
+                input_tokens = None
+                output_tokens = None
+                total_tokens = None
+                token_usage_type = "unknown"
+                est_input_tokens = None
+                est_output_tokens = None
+                est_total_tokens = None
+                est_method = None
+                llm_provider = settings.LLM_PROVIDER
+                llm_model = settings.LLM_MODEL
+
+            confidence = overall_status
+            if "couldn't find enough information" in answer_text.lower():
+                confidence = "insufficient_context"
+                citations = []
+
     except TokenBudgetExceededError as tbe:
         total_latency_ms = max(0.0, (time.perf_counter() - t_request_start) * 1000.0)
         telemetry = ChatTelemetry(
@@ -234,40 +392,6 @@ async def ask_question(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to generate answer from language model provider."
         )
-
-    measured_llm_latency_ms = max(0.0, (time.perf_counter() - t_llm_call_start) * 1000.0)
-
-    if isinstance(llm_result, LLMResponse):
-        answer_text = llm_result.content
-        llm_latency_ms = llm_result.latency_ms if llm_result.latency_ms > 0 else measured_llm_latency_ms
-        input_tokens = llm_result.input_tokens
-        output_tokens = llm_result.output_tokens
-        total_tokens = llm_result.total_tokens
-        token_usage_type = llm_result.token_usage_type
-        est_input_tokens = llm_result.estimated_input_tokens
-        est_output_tokens = llm_result.estimated_output_tokens
-        est_total_tokens = llm_result.estimated_total_tokens
-        est_method = llm_result.estimation_method
-        llm_provider = llm_result.provider or settings.LLM_PROVIDER
-        llm_model = llm_result.model or settings.LLM_MODEL
-    else:
-        answer_text = str(llm_result)
-        llm_latency_ms = measured_llm_latency_ms
-        input_tokens = None
-        output_tokens = None
-        total_tokens = None
-        token_usage_type = "unknown"
-        est_input_tokens = None
-        est_output_tokens = None
-        est_total_tokens = None
-        est_method = None
-        llm_provider = settings.LLM_PROVIDER
-        llm_model = settings.LLM_MODEL
-
-    confidence = "supported"
-    if "couldn't find enough information" in answer_text.lower():
-        confidence = "insufficient_context"
-        citations = []
 
     # 7. Calculate estimated costs
     if token_usage_type == "actual":

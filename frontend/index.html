@@ -9,104 +9,157 @@
 </head>
 <body>
   <div class="app-container legal-workspace">
-    <!-- Header -->
     <header class="app-header legal-header">
-      <div class="brand">
-        <span class="icon">⚖️</span>
-        <h1>Legal Document Q&A</h1>
+      <div class="brand-lockup">
+        <div class="brand">
+          <span class="icon" aria-hidden="true">§</span>
+          <div class="brand-copy">
+            <h1>Jurisprudence</h1>
+            <span>LEGAL DOCUMENT QA</span>
+          </div>
+        </div>
       </div>
-      <div class="disclaimer-badge">
-        <span>Grounded Legal Assistant • Document Analysis Only</span>
+      <nav class="top-nav" aria-label="Workspace">
+        <a class="top-nav-link active" href="#qaWorkspace">QA Chat</a>
+        <a class="top-nav-link" href="#documentsList">Evidence Corpus</a>
+      </nav>
+      <button type="button" id="sidebarToggle" class="sidebar-toggle" aria-label="Open evidence corpus" aria-expanded="false">☰</button>
+      <div class="header-context">
+        <span class="context-mark" aria-hidden="true"></span>
+        <span>ACTIVE MATTER</span>
+        <strong id="activeDocName">No document selected</strong>
       </div>
     </header>
 
     <div class="main-layout legal-layout">
-      <!-- Sidebar / Document Management -->
-      <aside class="sidebar legal-sidebar">
-        <div class="card upload-card">
-          <h2>Upload Document</h2>
-          <p class="subtitle">Upload a legal PDF (Contract, Agreement, NDA, Lease)</p>
-          
-          <div class="drop-zone" id="dropZone">
-            <input type="file" id="fileInput" accept=".pdf" />
-            <div class="drop-prompt">
-              <span class="upload-icon">📄</span>
-              <p>Drag & drop PDF here or <strong>browse</strong></p>
-              <span class="file-hint">Max size: 25 MB</span>
-            </div>
-          </div>
+      <aside class="sidebar legal-sidebar" aria-label="Evidence corpus">
+        <button type="button" id="uploadOpenBtn" class="upload-action">
+          <span aria-hidden="true">↑</span>
+          <span>Upload Document</span>
+        </button>
 
-          <div id="uploadStatus" class="status-box hidden"></div>
-        </div>
-
-        <div class="card documents-card">
+        <section class="documents-card">
           <div class="section-title">
-            <h2>Your Documents</h2>
-            <button id="refreshDocsBtn" class="icon-btn" title="Refresh">🔄</button>
+            <div>
+              <span class="section-kicker">EVIDENCE CORPUS</span>
+              <h2>Indexed documents</h2>
+            </div>
+            <button id="refreshDocsBtn" class="icon-btn" type="button" title="Refresh documents" aria-label="Refresh documents">↻</button>
           </div>
+          <div class="corpus-count"><strong id="indexedCount">0</strong><span>Indexed</span></div>
           <div id="documentsList" class="documents-list">
-            <p class="empty-text">No documents uploaded yet.</p>
+            <p class="empty-text">No documents in this corpus yet.</p>
           </div>
-        </div>
-      </aside>
+        </section>
 
-      <!-- Main Chat Area -->
-      <main class="chat-section legal-chat-section">
+        <div id="uploadStatus" class="status-box hidden" role="status" aria-live="polite"></div>
+
+        <footer class="sidebar-footer">
+          <div class="footer-guidance">
+            <span class="footer-rule" aria-hidden="true"></span>
+            <span>Evidence is limited to the selected document and returned citations.</span>
+          </div>
+          <div class="session-indicator"><span></span>Local research workspace</div>
+        </footer>
+      </aside>
+      <button type="button" class="sidebar-backdrop" id="sidebarBackdrop" aria-label="Close evidence corpus" hidden></button>
+
+      <main class="chat-section legal-chat-section" id="qaWorkspace">
         <div class="active-doc-banner" id="activeDocBanner">
           <div class="doc-info">
-            <span class="label">ACTIVE DOCUMENT:</span>
-            <strong id="activeDocName">None selected</strong>
-            <span id="activeDocStats" class="badge"></span>
+            <span class="label">CURRENT CONTEXT</span>
+            <span id="activeDocStats" class="badge">Select a document</span>
           </div>
-          <div class="legal-safety-note">
-            ⚠️ Responses are grounded strictly in this document. Not formal legal advice.
-          </div>
+          <div class="legal-safety-note">Responses are limited to retrieved document context. Not legal advice.</div>
         </div>
 
-        <!-- Chat Conversation Messages -->
-        <div class="chat-messages" id="chatMessages">
-          <div class="message assistant intro-msg">
-            <div class="message-content legal-intro-panel">
-              <div class="intro-kicker">Document research workflow</div>
-              <h3>Welcome to the Legal Document Q&A Assistant</h3>
-              <p>Please upload or select a legal contract or document to begin. Once indexed, you can ask precise questions regarding:</p>
-              <div class="research-tags" aria-label="Research topics">
-                <span class="research-tag">Termination</span>
-                <span class="research-tag">Payment</span>
-                <span class="research-tag">Confidentiality</span>
-                <span class="research-tag">Disputes</span>
-              </div>
-              <ul class="legal-checklist">
-                <li>Termination notice periods and trigger conditions</li>
-                <li>Payment terms, late fees, and compensation schedules</li>
-                <li>Confidentiality and non-disclosure obligations</li>
-                <li>Governing law and dispute resolution procedures</li>
-              </ul>
+        <div class="chat-messages" id="chatMessages" aria-live="polite">
+          <section class="empty-workspace" id="emptyState" aria-labelledby="emptyHeading">
+            <div class="empty-copy">
+              <span class="intro-kicker">DOCUMENT INQUIRY</span>
+              <h2 id="emptyHeading">Ask questions grounded in<br><em id="emptyDocName">a selected document</em></h2>
+              <p>Review the selected document through focused questions. Responses are generated from retrieved passages and include source excerpts when available.</p>
             </div>
-          </div>
+
+            <section class="readiness-panel" aria-label="Document readiness">
+              <div class="readiness-heading">
+                <div>
+                  <span class="section-kicker">CORPUS CALIBRATION</span>
+                  <h3>Document readiness</h3>
+                </div>
+                <span class="readiness-state" id="readinessStatus">Awaiting document</span>
+              </div>
+              <div class="readiness-details" id="readinessDetails">Select an indexed document to view its available page and chunk counts.</div>
+              <div class="readiness-metrics">
+                <div><span>PDF pages</span><strong id="readinessPages">—</strong></div>
+                <div><span>Indexed chunks</span><strong id="readinessChunks">—</strong></div>
+                <div><span>Context source</span><strong>Selected document</strong></div>
+              </div>
+            </section>
+
+            <section class="inquiry-starters" aria-labelledby="inquiryHeading">
+              <div class="starter-heading">
+                <span class="section-kicker">INQUIRY STARTERS</span>
+                <h3 id="inquiryHeading">Begin with a question</h3>
+              </div>
+              <div class="starter-list">
+                <button type="button" class="question-suggestion" data-question="What obligations does this document describe?" disabled>What obligations does this document describe?<span aria-hidden="true">↗</span></button>
+                <button type="button" class="question-suggestion" data-question="What dates or notice periods are stated?" disabled>What dates or notice periods are stated?<span aria-hidden="true">↗</span></button>
+                <button type="button" class="question-suggestion" data-question="Which parties and responsibilities are identified?" disabled>Which parties and responsibilities are identified?<span aria-hidden="true">↗</span></button>
+              </div>
+            </section>
+          </section>
         </div>
 
-        <!-- Input Box -->
         <div class="chat-input-container">
           <form id="chatForm">
-            <input 
-              type="text" 
-              id="questionInput" 
-              placeholder="Select a document first to ask questions..." 
-              disabled 
-              autocomplete="off"
-            />
-            <button type="submit" id="sendBtn" disabled>
-              <span>Ask</span> ➔
-            </button>
+            <label class="input-context" for="questionInput"><span aria-hidden="true">▤</span><span id="inputDocName">Document context unavailable</span></label>
+            <div class="input-compose">
+              <textarea id="questionInput" placeholder="Select a document before asking a question..." disabled autocomplete="off" rows="2" maxlength="1500" aria-label="Ask a question about the selected legal document"></textarea>
+              <button type="submit" id="sendBtn" disabled aria-label="Send question"><span>Ask</span><span aria-hidden="true">→</span></button>
+            </div>
           </form>
           <div class="input-footer">
             <span id="charCount">0/1500</span>
-            <span>Answers generated strictly from verified document context with citations</span>
+            <span>Answers reflect retrieved passages, not a substitute for legal counsel.</span>
           </div>
         </div>
       </main>
+
+      <aside class="source-inspector" id="sourceInspector" hidden aria-label="Source context inspection" aria-hidden="true">
+        <div class="inspector-header">
+          <div>
+            <span class="section-kicker">EVIDENCE RECORD</span>
+            <h2>Source context</h2>
+          </div>
+          <button id="sourceInspectorClose" class="icon-btn" type="button" aria-label="Close source context">×</button>
+        </div>
+        <div class="inspector-document">
+          <span class="document-glyph" aria-hidden="true">▤</span>
+          <div><strong id="sourceDocumentName">Source document</strong><span id="sourceLocation">Citation details unavailable</span></div>
+        </div>
+        <div class="source-excerpt-label">VERIFIED EXCERPT</div>
+        <blockquote id="sourceExcerpt" class="source-excerpt">Select a citation to inspect its returned excerpt.</blockquote>
+        <p class="inspector-note">This view contains the excerpt supplied with the citation. Full-page PDF navigation is not available in the current application.</p>
+      </aside>
     </div>
+
+    <dialog class="upload-dialog" id="uploadDialog" aria-labelledby="uploadDialogTitle">
+      <form method="dialog" class="dialog-chrome"><button type="submit" class="icon-btn" aria-label="Close upload dialog">×</button></form>
+      <div class="dialog-content">
+        <span class="section-kicker">EVIDENCE INTAKE</span>
+        <h2 id="uploadDialogTitle">Upload a legal document</h2>
+        <p>Upload a PDF to index its contents for document-grounded questions.</p>
+        <label class="drop-zone" id="dropZone" for="fileInput">
+          <input type="file" id="fileInput" accept="application/pdf,.pdf" aria-label="Choose a PDF document" />
+          <span class="upload-icon" aria-hidden="true">↑</span>
+          <strong>Drop your legal PDF here</strong>
+          <span>or browse files on this device</span>
+          <small>PDF documents only</small>
+        </label>
+        <div class="dialog-footnote"><span aria-hidden="true">i</span>Document processing runs through the existing indexing service.</div>
+      </div>
+    </dialog>
   </div>
 
   <script src="/static/app.js"></script>

@@ -28,7 +28,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     sources: List[Citation] = Field(default_factory=list)
-    confidence: str = "supported"  # "supported", "insufficient_context", "low_confidence"
+    confidence: str = "supported"  # "supported", "partially_supported", "insufficient_context", "low_confidence"
     disclaimer: str = (
         "This tool provides information extracted from uploaded legal documents "
         "and is not a substitute for formal legal advice from a qualified attorney."

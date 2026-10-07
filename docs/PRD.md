@@ -83,7 +83,10 @@ The **MVP-001** milestone is **COMPLETE** and serves as the stable baseline for 
 * **Governing Law Verification:** Verified accurate extraction of governing jurisdiction (`"Delaware"`).
 * **Negative Query Refusal:** Verified that unanswerable, out-of-document queries (e.g., SpaceX rocket launch protocol) return `"couldn't find enough information"`, confidence `insufficient_context`, and exactly 0 citations.
 * **Historical MVP-001 test baseline:** 11 tests passed at the original milestone.
-* **Current verified test baseline:** 63 tests passed, 1 warning, 0 failed using `PYTHONPATH=. ./venv/bin/pytest`.
+* **Current verified test baseline:** 93 tests passed, 1 warning, 0 failed using `PYTHONPATH=. ./venv/bin/pytest`.
+* **Offline RAG evaluation benchmark (OPT-018):** 16/16 test cases passed (100.0%) across direct facts, multi-clause context, unanswerable questions, adversarial cases, citations, and retrieval.
+* **Compound Query Partial Answerability (UNANS-005):** Fully operational with deterministic query decomposition, independent sub-question evaluation, and granular answer assembly.
+* **Frontend UI workstream:** Active parallel development modernizing the user interface (source inspector, modal upload, mobile drawer); backend API contracts remain stable.
 
 ### 6.2 Key Fixes Applied in MVP-001
 1. **Synthetic PDF Text Clipping:** Corrected PDF creation script textbox coordinates to prevent boundary truncation.
@@ -100,25 +103,28 @@ The **MVP-001** milestone is **COMPLETE** and serves as the stable baseline for 
 | **PDF Text Extraction** | **CURRENT** | PyMuPDF block extraction, whitespace/hyphen cleanup, 1-indexed page numbers; rejects empty/scanned text. No OCR. |
 | **Chunking and Sections** | **CURRENT / PARTIAL** | Paragraph chunks up to 500 characters with 100-character overlap; regex detects common headings and carries page/section metadata. No full clause hierarchy or layout AST. |
 | **Duplicate Detection** | **CURRENT / COMPLETED OPT-001** | SHA-256 of raw PDF bytes is checked before extraction; compatible duplicates reuse the existing record and index. |
-| **Embedding Providers** | **CURRENT / COMPLETED OPT-008** | TF-IDF is the configured default; Mock, FastEmbed (`BAAI/bge-small-en-v1.5`, 384 dimensions), and OpenAI embeddings are implemented. The inspected runtime initialized TF-IDF / `tfidf-scikit`; runtime identity is read from the provider, not inferred from `.env`. |
-| **Vector Compatibility** | **CURRENT / COMPLETED OPT-008** | New indexes persist provider, model, dimension, and chunk count. Stored dimensions are checked when metadata exists; query/store dimension mismatch raises a typed error. Duplicate reuse checks provider/model metadata and re-indexes incompatible records. |
+| **Embedding Providers** | **CURRENT / COMPLETED OPT-008** | TF-IDF is the configured default; Mock, FastEmbed (`BAAI/bge-small-en-v1.5`, 384 dimensions via ONNX Runtime), and OpenAI embeddings are implemented. FastEmbed is a selectable local dense provider. Provider identity is read from the runtime provider instance, not inferred from `.env`. |
+| **Vector Compatibility** | **CURRENT / COMPLETED OPT-008** | New indexes persist provider, model, dimension, and chunk count. Stored dimensions are checked when metadata exists; query/store dimension mismatch raises a typed error (`EmbeddingDimensionMismatchError`). Duplicate reuse checks provider/model metadata and re-indexes incompatible records. |
 | **Vector Store and Retrieval** | **CURRENT** | Per-document NumPy vectors and JSON chunks; cosine similarity via normalized dot product, scoped by `document_id`, default `TOP_K=4`, `SIMILARITY_THRESHOLD=0.1`. |
-| **Grounded QA** | **CURRENT** | Mock and OpenAI providers; the active inspected runtime used Mock. System prompt limits answers to supplied context and prohibits legal advice. |
-| **Refusal Behavior** | **CURRENT BASELINE** | Chat route refuses without an LLM call when no chunks pass the existing similarity threshold; an LLM refusal suppresses citations. No separate confidence threshold is implemented. |
-| **Citations** | **CURRENT** | Citation formatter returns document name, page, section, chunk ID, snippet (<=250 characters), and relevance score from retrieved chunks. No generated-claim citation validator. |
-| **Token/Cost Observability** | **CURRENT / COMPLETED OPT-017** | Request ID, retrieval/embedding/LLM/total latency, chunk count, provider/model, token usage, and estimated costs are returned and structured-logged. Token usage is actual, estimated, or unknown; some costs can be null. |
-| **Resource Limits** | **CURRENT / COMPLETED OPT-021** | Upload bytes, pages, chunks, query characters, top-K, context characters, estimated prompt tokens, and output tokens are bounded; rejection telemetry and cleanup are tested. |
-| **Conversation Memory** | **PARTIAL** | Frontend sends history; OpenAI provider appends at most the last four messages. No query reformulation or history-token budget. |
-| **Document Management** | **CURRENT** | Upload, list, metadata fetch, content-hash reuse, and document/file/index deletion. Metadata remains JSON-file based. |
-| **Web Dashboard** | **CURRENT** | Vanilla HTML/CSS/JavaScript SPA with document management sidebar and grounded chat pane. |
-| **API Envelope and Health** | **CURRENT** | Standardized `ApiResponse`; health endpoint reports configured provider names. |
+| **Relevance & Confidence Gating** | **CURRENT / COMPLETED OPT-003** | Semantic evidence gate in `RetrievalService.is_context_relevant`: requires `top_score >= 0.35` with $\ge 1$ content word match, or `top_score >= 0.10` with $\ge 35\%$ content word coverage (`MIN_CONTENT_WORD_OVERLAP`). Queries failing criteria return zero chunks and bypass the LLM. |
+| **Compound Query Handling** | **CURRENT / COMPLETED UNANS-005** | Deterministic query decomposition via `QueryService.decompose_query` for multi-question clauses, semicolons, and conjunction lists. Evaluates sub-questions independently, categorizes into `supported`, `partially_supported`, or `insufficient_context`, explicitly notes missing components, and attaches citations strictly to supported components without LLM hallucination. |
+| **Grounded QA** | **CURRENT** | Mock and OpenAI providers; system prompt constrains answers strictly to supplied context and prohibits legal advice. |
+| **Refusal Behavior** | **CURRENT** | When retrieval produces no chunks or semantic evidence gating fails, the route short-circuits without calling the LLM, returning "I couldn't find enough information in the uploaded document to answer this question.", status `insufficient_context`, and 0 citations. |
+| **Citations** | **CURRENT** | Verifiable citations generated per retrieved chunk: document name, page number, section heading, chunk ID, relevance score, and bounded snippet ($\le 250$ chars). Generated-claim citation validator remains future work. |
+| **Token/Cost Observability** | **CURRENT / COMPLETED OPT-017** | Request ID, retrieval/embedding/LLM/total latency, chunk count, provider/model, token usage (`actual`, `estimated`, or `unknown`), and estimated costs returned in API response and structured logs. |
+| **Resource Limits** | **CURRENT / COMPLETED OPT-021** | Upload bytes (25 MB), pages (500), chunks (5,000), query characters (2,000), top-K (10), context characters (8,000), prompt tokens (4,096), and output tokens (1,024) bounded; typed errors return HTTP 400 with `X-Error-Category`. |
+| **Conversation Memory** | **PARTIAL** | Frontend passes conversation history; OpenAI provider appends up to the last 4 messages. Standalone query contextualization/rewriting and history token budgets remain pending. |
+| **Document Management** | **CURRENT** | Upload, list, metadata fetch, content-hash reuse, and document/file/index deletion. Metadata stored in `documents_meta.json`. |
+| **Web Dashboard** | **IN PROGRESS (PARALLEL)** | Responsive SPA under active modernization by parallel frontend workstream; backend integration preserved via `/api/documents` and `/api/chat`. |
+| **API Envelope and Health** | **CURRENT** | Standardized `ApiResponse` envelope; health endpoint reports configured provider status and diagnostics. |
 
 ### 6.4 Current Baseline Limitations
 1. **Default Embedding Choice:** TF-IDF remains the configured default and is lexical; FastEmbed is implemented as a selectable local dense provider.
 2. **No Query Reformulation:** Follow-up questions with pronouns (e.g., *"What happens if I don't give it?"*) are not rewritten before retrieval.
-3. **No OCR Ingestion:** Scanned PDFs without sufficient extractable text are rejected.
+3. **No OCR Ingestion:** Scanned PDFs without sufficient extractable text are rejected with `ScannedPDFError`.
 4. **File-Based Metadata Store:** `documents_meta.json` lacks ACID transactions and concurrent write locks.
-5. **No Authentication:** API endpoints and document files are not protected by authentication.
+5. **No Authentication / RBAC:** API endpoints and document files are not protected by authentication.
+6. **Prompt Injection Boundaries:** Document passages are not yet encapsulated within strict XML isolation tags (`OPT-016`).
 
 ---
 
@@ -195,15 +201,15 @@ This section specifies the token and cost management scenarios governing the pro
 
 ### 8.2 Retrieval & Context Optimization
 
-#### 8.2.1 "No Evidence = No LLM" Rule
-* **Classification:** **CURRENT BASELINE / PLANNED ENHANCEMENT (OPT-003)**
+#### 8.2.1 "No Evidence = No LLM" Rule & Semantic Confidence Gate
+* **Classification:** **CURRENT / COMPLETED (OPT-003)**
 * **Principle:** **If retrieval yields no sufficiently relevant evidence, do not invoke the LLM.**
-* **Current Baseline:** If `vector_store.search` returns 0 chunks above `SIMILARITY_THRESHOLD`, `routes_chat.py` immediately returns the standard refusal without dispatching a request to `LLMService`.
-* **Planned enhancement (OPT-003):**
-  * When top chunk similarity is below confidence threshold `RELEVANCE_CONFIDENCE_THRESHOLD` (e.g. 0.35 in dense embeddings), bypass LLM inference entirely.
-  * Return deterministic response: *"I couldn't find enough information in the uploaded document to answer this question."*
-  * Suppress all citations.
-  * Log retrieval outcome as `REJECTION_INSUFFICIENT_EVIDENCE`.
+* **Current Behavior:**
+  * Implemented in `RetrievalService.is_context_relevant` and enforced at retrieval time.
+  * Checks content-word overlap against query content words (filtering stop words).
+  * Passes when `top_score >= settings.RELEVANCE_CONFIDENCE_THRESHOLD` (0.35) with at least 1 content word match, OR when `top_score >= settings.SIMILARITY_THRESHOLD` (0.10) with content word overlap ratio $\ge 0.35$ (`settings.MIN_CONTENT_WORD_OVERLAP`).
+  * If results fail these semantic criteria or return 0 chunks, `RetrievalService` yields an empty list.
+  * `routes_chat.py` immediately returns the standard refusal ("I couldn't find enough information in the uploaded document to answer this question."), sets status `insufficient_context`, clears citations, and bypasses LLM inference entirely.
   * **Benefit:** Saves 100% of LLM generation tokens and prevents hallucinated answers on unanswerable questions.
 
 #### 8.2.2 Deterministic Question Routing
@@ -235,6 +241,19 @@ This section specifies the token and cost management scenarios governing the pro
 * **Classification:** **CURRENT (Document-Scoped) / PLANNED (Version-Isolated, OPT-022)**
 * **Requirement:** Maintain strict document boundaries. Queries must only match vectors associated with the designated `document_id` and `document_version`.
 * **Behavior:** Prohibit cross-document vector leakage. Chunks from previous versions of the same document must not contaminate active context unless explicitly requested in a comparison query.
+
+#### 8.2.6 Compound Query Partial Answerability
+* **Classification:** **CURRENT / COMPLETED (UNANS-005)**
+* **Requirement:** Deterministically decompose compound questions into constituent sub-questions, evaluate each against document evidence independently, and assemble an accurate partial answer.
+* **Mechanism:**
+  * `QueryService.decompose_query` decomposes queries split across multiple question marks, semicolons, conjunction clauses (`and what/who/which/why`), and Oxford-comma lists.
+  * Each sub-question is evaluated against corpus vocabulary and retrieved chunks.
+  * Sub-questions are classified into supported vs. unsupported.
+  * Status is reported as:
+    * `supported`: All sub-questions find adequate evidence.
+    * `partially_supported`: At least one sub-question is supported and at least one is unsupported.
+    * `insufficient_context`: None of the sub-questions find sufficient evidence (short-circuits LLM invocation entirely).
+  * In `partially_supported` scenarios, supported components are answered using their relevant chunks while unsupported components are explicitly stated as not found (e.g., *"Severance payment amount: not found in the provided document."*). Citations are strictly restricted to supported chunks, preventing hallucinated provenance.
 
 ---
 
@@ -381,13 +400,12 @@ This section specifies the token and cost management scenarios governing the pro
 ### 9.1 Token & Cost Metrics (CURRENT / COMPLETED OPT-017)
 The application returns telemetry with chat responses and emits structured JSON logs. `ChatTelemetry` includes request ID/status, total/retrieval/embedding/LLM latency, retrieved chunk count, token usage type (`actual`, `estimated`, or `unknown`), token counts/estimates, provider/model identifiers, and estimated LLM/embedding/total cost. Document telemetry records ingestion phase latencies, embedding usage when reported, and estimated embedding cost. Unknown usage or unpriced/local embeddings can produce null costs. Cache-hit status is not implemented and remains future work.
 
-### 9.2 RAG Grounding Evaluation Suite (NEXT / PLANNED OPT-018)
-No benchmark suite is currently present. Establish a repeatable offline evaluation dataset to measure the existing implementation, without adding runtime features:
-1. **Explicit Clause Questions:** Direct extraction of dates, percentages, cure windows, and governing state.
-2. **Negative/Unanswerable Questions:** Inquiries on clauses omitted from the contract (must return 100% refusal rate).
-3. **Multi-Hop / Cross-Clause Questions:** Interdependent terms (e.g., termination notice combined with effect of termination payments).
-4. **Follow-Up Inquiries:** Pronoun-dependent questions testing query reformulation.
-5. **Adversarial / Injection Queries:** Text injection attempts inside contracts.
+### 9.2 RAG Grounding Evaluation Suite (CURRENT / COMPLETED OPT-018)
+A standardized, repeatable offline evaluation benchmark suite is implemented in `tests/evaluation/` to measure RAG pipeline grounding, citation precision, and refusal behavior without altering runtime logic.
+* **Harness & Dataset:** `benchmark_dataset.py` contains 16 canonical legal test cases across 6 functional categories.
+* **Runner & Report:** `run_benchmark.py` and `eval_harness.py` generate structured reports evaluating Answer Correctness, Retrieval Correctness, Citation Correctness, Refusal Correctness, and Grounding Integrity.
+* **Test Integration:** `tests/evaluation/test_rag_eval.py` runs automated regression checks in isolated temporary stores.
+* **Current Result:** 16/16 cases passed (100.0%) across direct facts (4/4), multi-clause context (2/2), unanswerable questions (4/4), adversarial cases (2/2), citation integrity (2/2), and retrieval quality (2/2).
 
 ### 9.3 Quality & Performance Targets
 
@@ -409,7 +427,7 @@ No benchmark suite is currently present. Establish a repeatable offline evaluati
 |---|---|---|---|---|---|
 | **FR-EFF-001** | Content-based duplicate detection | Document Ingestion / Hashing | `OPT-001` | **COMPLETED** | Upload identical PDF under a different filename; verify reuse and no re-indexing. |
 | **FR-EFF-002** | Deterministic question routing | Query Router | `OPT-002` | **PLANNED** | Ask page count / metadata; verify 0 LLM calls. |
-| **FR-EFF-003** | Enhanced no-evidence gate | Retrieval Gate | `OPT-003` | **PLANNED** | Test below-confidence evidence; verify deterministic refusal, 0 citations, and no LLM call. |
+| **FR-EFF-003** | Enhanced no-evidence gate | Retrieval Gate | `OPT-003` | **COMPLETED** | Test below-confidence evidence; verify deterministic refusal, 0 citations, and no LLM call. |
 | **FR-EFF-004** | Adaptive Top-K & threshold | Retrieval Service | `OPT-004` | **PLANNED** | Measure retrieved context tokens and answer quality. |
 | **FR-EFF-005** | Context deduplication | Context Optimizer | `OPT-005` | **PLANNED** | Verify overlapping passages are pruned before prompt assembly. |
 | **FR-EFF-006** | Conversational query rewrite | Query Contextualizer | `OPT-006` | **PLANNED** | Test pronoun follow-up retrieval. |
@@ -421,7 +439,8 @@ No benchmark suite is currently present. Establish a repeatable offline evaluati
 | **FR-SEC-001** | Prompt Injection Defense | Prompt Builder / LLM Guard | `OPT-016` | **PLANNED** | Test adversarial document instructions. |
 | **FR-OBS-001** | Token & Cost Observability | Metrics Logger | `OPT-017` | **COMPLETED** | Inspect response telemetry and structured logs. |
 | **Hard Resource Limits** | Resource Limit Enforcer | `OPT-021` | **COMPLETED** | Verify configured upload, page, chunk, query, context, and token limits and rejection cleanup. |
-| **FR-EVAL-001** | Systematic RAG Evaluation | Evaluation Suite | `OPT-018` | **NEXT** | Run repeatable grounded-answer, refusal, citation, retrieval, token, cost, and latency checks. |
+| **FR-EVAL-001** | Systematic RAG Evaluation | Evaluation Suite | `OPT-018` | **COMPLETED** | Run repeatable grounded-answer, refusal, citation, retrieval, token, cost, and latency checks (16/16 passed). |
+| **FR-UNANS-001** | Compound Query Partial Answerability | Query Service / Chat Route | `UNANS-005` | **COMPLETED** | Decompose compound questions; assert independent sub-question evaluation, partial answers, and 0 hallucinated citations. |
 
 ---
 
@@ -457,10 +476,11 @@ No benchmark suite is currently present. Establish a repeatable offline evaluati
 | ID | Given | When | Then | Status |
 |---|---|---|---|---|
 | **AC-01** | A valid text-based legal PDF | User uploads file via UI or API | File is extracted, chunked, and indexed with status `processed`. | **CURRENT** |
-| **AC-02** | A scanned/image-only PDF | User uploads file | System identifies insufficient extractable text and returns an OCR-required error; OCR is not performed. | **CURRENT** |
+| **AC-02** | A scanned/image-only PDF | User uploads file | System identifies insufficient extractable text and returns an OCR-required error (`ScannedPDFError`); OCR is not performed. | **CURRENT** |
 | **AC-03** | An indexed legal document | User asks question with facts present in document | System returns a grounded answer with retrieved-source citation metadata. | **CURRENT** |
-| **AC-04** | An indexed legal document | User asks an out-of-document question and retrieval returns no chunks above threshold | System returns the refusal with zero citations without invoking the LLM. | **CURRENT BASELINE** |
+| **AC-04** | An indexed legal document | User asks an out-of-document question and retrieval returns no chunks or fails semantic confidence gate | System returns the refusal with zero citations without invoking the LLM (`OPT-003`). | **CURRENT / COMPLETED** |
 | **AC-05** | Two distinct indexed documents | User queries Document A | Retrieval is scoped to Document A and does not return Document B chunks. | **CURRENT** |
-| **AC-06** | An existing indexed document | User uploads identical file under a different filename | SHA-256 detection reuses the compatible existing document/index without redundant embedding. | **COMPLETED (OPT-001)** |
-| **AC-07** | An indexed legal document | User asks a follow-up question containing pronouns | System contextualizes query into standalone search query and retrieves relevant clauses. | **PLANNED (OPT-006)** |
-| **AC-08** | Any user query | User requests document page count or metadata | System routes query deterministically, answering with 0 LLM tokens consumed. | **PLANNED (OPT-002)** |
+| **AC-06** | An existing indexed document | User uploads identical file under a different filename | SHA-256 detection reuses the compatible existing document/index without redundant embedding (`OPT-001`). | **CURRENT / COMPLETED** |
+| **AC-07** | An indexed legal document | User asks a compound question with both supported and unsupported sub-clauses | System decomposes query, answers supported components, explicitly lists unsupported parts, avoids fabricated citations, and sets status `partially_supported` (`UNANS-005`). | **CURRENT / COMPLETED** |
+| **AC-08** | An indexed legal document | User asks a follow-up question containing pronouns | System contextualizes query into standalone search query and retrieves relevant clauses. | **PLANNED (OPT-006)** |
+| **AC-09** | Any user query | User requests document page count or metadata | System routes query deterministically, answering with 0 LLM tokens consumed. | **PLANNED (OPT-002)** |

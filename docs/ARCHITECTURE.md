@@ -24,11 +24,11 @@ The current runtime runs as a single FastAPI process hosting synchronous and asy
 
 ```text
                                +----------------------------+
-                               |     Browser Client         |
-                               | (HTML5 / Vanilla JS / CSS) |
-                               +--------------+-------------+
-                                              | HTTP / REST
-                                              v
+                                |     Browser Client         |
+                                | (HTML5 / Vanilla JS / CSS) |
+                                +--------------+-------------+
+                                               | HTTP / REST
+                                               v
 +------------------------------------------------------------------------------------------+
 |                                    FastAPI Application                                   |
 |                                                                                          |
@@ -36,28 +36,35 @@ The current runtime runs as a single FastAPI process hosting synchronous and asy
 |    | routes_health.py     |  | routes_documents.py  |  | routes_chat.py              |   |
 |    +----------------------+  +----------+-----------+  +--------------+--------------+   |
 |                                         |                             |                  |
-|                                         v                             v                  |
-|                              +----------------------+  +-----------------------------+   |
-|                              | DocumentService      |  | RetrievalService            |   |
-|                              +----------+-----------+  +--------------+--------------+   |
-|                                         |                             |                  |
-|                    +--------------------+--------------------+        |                  |
-|                    |                    |                    |        |                  |
-|                    v                    v                    v        v                  |
-|          +------------------+ +-------------------+ +--------------------+               |
-|          | PDFService       | | ChunkingService   | | VectorStore        |               |
-|          | (PyMuPDF)        | | (Section-aware)   | | (Scoped Cosine)    |               |
-|          +------------------+ +-------------------+ +---------+----------+               |
-|                                                               |                          |
-|                                                               v                          |
-|                                                     +--------------------+               |
-|                                                     | EmbeddingService   |               |
-|                                                     | (TF-IDF / OpenAI)  |               |
-|                                                     +--------------------+               |
+|                                         v                             |                  |
+|                              +----------------------+                 v                  |
+|                              | DocumentService      |      +---------------------+       |
+|                              +----------+-----------+      | QueryService        |       |
+|                                         |                  | (Compound Splitter) |       |
+|                    +--------------------+                  +----------+----------+       |
+|                    |                    |                             |                  |
+|                    v                    v                             v                  |
+|          +------------------+ +-------------------+        +---------------------+       |
+|          | PDFService       | | ChunkingService   |        | RetrievalService    |       |
+|          | (PyMuPDF)        | | (Section-aware)   |        | (Semantic Gate)     |       |
+|          +------------------+ +-------------------+        +----------+----------+       |
+|                                                                       |                  |
+|                                                                       v                  |
+|                                                            +--------------------+        |
+|                                                            | VectorStore        |        |
+|                                                            | (Scoped Cosine)    |        |
+|                                                            +----------+---------+        |
+|                                                                       |                  |
+|                                                                       v                  |
+|                                                            +--------------------+        |
+|                                                            | EmbeddingService   |        |
+|                                                            | (TF-IDF / FastEmbed|        |
+|                                                            |  Mock / OpenAI)    |        |
+|                                                            +--------------------+        |
 |                                                                                          |
 |          +---------------------------------------------------------------+               |
 |          | LLMService (System Prompt + Mock / OpenAI)                    |               |
-|          | CitationService (Verifiable metadata & snippets)             |               |
+|          | CitationService (Verifiable metadata & bounded snippets)     |               |
 |          +---------------------------------------------------------------+               |
 +------------------------------------------------------------------------------------------+
                                               |
@@ -67,11 +74,11 @@ The current runtime runs as a single FastAPI process hosting synchronous and asy
           +-------------------------+                   +-------------------------+
           | data/uploads/           |                   | data/vector_store/      |
           | Physical PDF Files      |                   | .npy vectors            |
-          | documents_meta.json     |                   | .json chunks            |
+          | documents_meta.json     |                   | .json chunks, meta.json |
           +-------------------------+                   +-------------------------+
 ```
 
-The topology depicts service boundaries rather than an exhaustive provider list. Implemented embedding providers are TF-IDF, FastEmbed, Mock, and OpenAI. The inspected runtime initialized TF-IDF (`tfidf-scikit`) and Mock LLM. Current vector index writes include a provider/model/dimension/chunk-count metadata sidecar; older indexes without one remain loadable.
+The topology depicts service boundaries rather than an exhaustive provider list. Implemented embedding providers are TF-IDF (default runtime), FastEmbed (`BAAI/bge-small-en-v1.5`, 384 dimensions via ONNX), Mock, and OpenAI. Active vector index writes include a provider/model/dimension/chunk-count metadata sidecar; older indexes without one remain loadable.
 
 ### 2.2 Current Ingestion Flow
 
@@ -85,17 +92,27 @@ Current document ingestion proceeds through these implemented steps:
 7. **Index persistence (OPT-008 compatibility):** `VectorStore` normalizes vectors and writes `.npy` vectors, JSON chunks, and provider/model/dimension/chunk-count metadata for new indexes. If the sidecar exists, its dimension is checked against the stored matrix during load. Search-time query/store dimension mismatches raise `EmbeddingDimensionMismatchError`.
 8. **Catalog and telemetry:** `DocumentMetadata` is saved to `documents_meta.json`; document-processing metrics are structured-logged and kept in the in-memory telemetry collector.
 
-### 2.3 Current Query & Grounding Flow
+### 2.3 Current Query, Evidence Gating & Grounding Flow
 
-Current chat requests proceed as follows:
-1. `POST /api/chat` establishes/propagates a request ID and enforces query-length and requested top-K limits.
-2. The route verifies the document and calls `RetrievalService`, which embeds the query with the active provider.
-3. `VectorStore` searches only the requested document's normalized vector matrix. It validates query/store dimensions and applies `SIMILARITY_THRESHOLD` (default 0.1); no separate confidence threshold is implemented.
-4. If no chunks survive the existing threshold, the route returns the deterministic insufficient-context refusal with no citations and does not call `LLMService`.
-5. With retrieved chunks, the route enforces the context character limit, formats citations, and calls `LLMService` under the estimated prompt-token budget. Implemented LLM providers are Mock and OpenAI.
-6. An LLM refusal suppresses citations. Telemetry includes request, retrieval, embedding, LLM, token, and estimated-cost fields and is returned in the response and structured log.
-
-This is the current baseline no-evidence behavior, not the planned OPT-003 confidence-gate enhancement. Citation formatting is implemented; generated-claim citation validation is not.
+Current chat requests proceed through the following verified pipeline:
+1. `POST /api/chat` establishes/propagates request ID and enforces `MAX_QUERY_CHARS` (2,000) and `MAX_TOP_K` (10) limits.
+2. **Deterministic Compound Query Decomposition (UNANS-005):** `QueryService.decompose_query` analyzes the query. If compound patterns (multiple questions, semicolons, conjunction clauses, or lists) are detected, it decomposes the question into independent sub-questions. Simple questions remain untouched.
+3. **Independent Evidence Evaluation & Semantic Confidence Gate (OPT-003):**
+   * For each sub-question (or the single query), `RetrievalService.retrieve` embeds the query and searches the document's scoped normalized vectors in `VectorStore`.
+   * `RetrievalService.is_context_relevant` evaluates retrieved candidates using the semantic confidence gate:
+     * Accepts if `top_score >= settings.RELEVANCE_CONFIDENCE_THRESHOLD` (0.35) with at least 1 content word match.
+     * Accepts if `top_score >= settings.SIMILARITY_THRESHOLD` (0.10) with content word overlap ratio $\ge 0.35$ (`settings.MIN_CONTENT_WORD_OVERLAP`).
+     * Otherwise rejects superficial/incidental lexical matches and yields an empty chunk list.
+4. **Status Determination & Short-Circuit Refusal:**
+   * **Fully Unsupported (`insufficient_context`):** If no chunks pass the evidence gate for any component, the route bypasses `LLMService` entirely, returns the deterministic refusal ("I couldn't find enough information in the uploaded document to answer this question."), sets `sources=[]`, and emits refusal telemetry.
+   * **Partially Supported (`partially_supported`):** If some sub-questions are supported while others lack evidence, `LLMService` is called *only* for the supported sub-questions using their respective retrieved chunks. Unsupported components are explicitly noted as not found (e.g. *"Severance payment amount: not found in the provided document."*). Citations are strictly restricted to the chunks supporting the answerable clauses.
+   * **Fully Supported (`supported`):** All components have evidence; context chunks are assembled under `MAX_CONTEXT_CHARS` (8,000) and passed to `LLMService`.
+5. **Grounded Answer Synthesis & Citations:**
+   * `LLMService.generate_answer` enforces the prompt token budget (`MAX_PROMPT_TOKENS = 4,096`) and synthesizes an answer strictly from context under the system prompt.
+   * `CitationService` formats citations including document name, page, section heading, chunk ID, relevance score, and bounded snippet ($\le 250$ chars).
+   * If the LLM generates a refusal, citations are suppressed.
+6. **Telemetry & Observability (OPT-017):**
+   * Returns request ID, latencies (retrieval, embedding, LLM, total), token usage (`actual`, `estimated`, or `unknown`), estimated costs, and confidence status in the API response and structured log.
 
 ---
 
