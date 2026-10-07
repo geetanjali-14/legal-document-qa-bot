@@ -37,3 +37,33 @@ def test_chunking_small_text_fallback():
     assert len(chunks) == 1
     assert chunks[0].page_number == 1
     assert "Brief short clause" in chunks[0].text
+
+
+def test_numbered_prose_is_not_detected_as_a_section_heading():
+    service = ChunkingService()
+    prose = (
+        "2. The parties hereby declare that they have taken independent advice "
+        "from their respective advocates and they know the true meaning and effect of this deed."
+    )
+
+    assert service.detect_section_header(prose) is None
+    assert service.detect_section_header("2. Termination") == "2. Termination"
+    assert service.detect_section_header(
+        "2. Termination 2.1 Termination for Convenience. Either party may terminate."
+    ) == "2. Termination"
+
+
+def test_chunk_overlap_keeps_a_split_word_intact():
+    service = ChunkingService(chunk_size=50, chunk_overlap=10, min_chunk_size=20)
+    pages = [
+        PageContent(
+            page_number=1,
+            text="alpha beta terminationnoticeislong\n\nSecond paragraph has enough content to form another chunk.",
+            char_count=95
+        )
+    ]
+
+    chunks = service.chunk_document("doc_3", "overlap.pdf", pages)
+
+    assert len(chunks) == 2
+    assert chunks[1].text.startswith("terminationnoticeislong Second paragraph")

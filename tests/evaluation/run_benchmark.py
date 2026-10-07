@@ -23,7 +23,7 @@ from app.services.pdf_service import PDFService
 from app.services.chunking_service import ChunkingService
 from app.services.embedding_service import EmbeddingService
 from app.services.retrieval_service import RetrievalService
-from app.services.llm_service import LLMService
+from app.services.llm_service import LLMService, MockLLMProvider
 from app.services.citation_service import CitationService
 from tests.evaluation.benchmark_dataset import BENCHMARK_CASES
 from tests.evaluation.eval_harness import (
@@ -31,6 +31,7 @@ from tests.evaluation.eval_harness import (
     compute_benchmark_summary,
     format_benchmark_report_text
 )
+import os
 
 
 def run_evaluation(pdf_path: Path = Path("documents/synthetic_contract.pdf")):
@@ -50,13 +51,11 @@ def run_evaluation(pdf_path: Path = Path("documents/synthetic_contract.pdf")):
             emb = EmbeddingService()
             pdf_s = PDFService()
             chunk_s = ChunkingService()
-            doc_s = DocumentService(pdf_s, chunk_s, emb, vs)
-            doc_s.upload_dir = upload_dir
-            doc_s.metadata_file = upload_dir / "documents_meta.json"
-            doc_s.documents = {}
-            doc_s._hash_to_id = {}
+            doc_s = DocumentService(pdf_s, chunk_s, emb, vs, upload_dir=upload_dir)
             ret_s = RetrievalService(emb, vs)
             llm_s = LLMService()
+            if os.environ.get("LIVE_GEMINI_TEST") != "1":
+                llm_s.provider = MockLLMProvider()
             cite_s = CitationService()
 
             app_state["vector_store"] = vs

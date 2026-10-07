@@ -6,8 +6,10 @@ import hashlib
 from pathlib import Path
 from typing import List, Optional, Dict
 from app.models.document import DocumentMetadata, DocumentChunk
+from app.models.structure import DocumentStructure
 from app.services.pdf_service import PDFService
 from app.services.chunking_service import ChunkingService
+from app.services.structure_parser import StructureParser
 from app.services.embedding_service import EmbeddingService
 from app.services.vector_store import VectorStore
 from app.core.config import settings
@@ -30,18 +32,22 @@ class DocumentService:
         pdf_service: PDFService,
         chunking_service: ChunkingService,
         embedding_service: EmbeddingService,
-        vector_store: VectorStore
+        vector_store: VectorStore,
+        upload_dir: Optional[Path] = None,
+        structure_parser: Optional[StructureParser] = None
     ):
         self.pdf_service = pdf_service
         self.chunking_service = chunking_service
         self.embedding_service = embedding_service
         self.vector_store = vector_store
+        self.structure_parser = structure_parser or StructureParser()
 
-        self.upload_dir = settings.UPLOAD_DIR
+        self.upload_dir = upload_dir or settings.UPLOAD_DIR
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_file = self.upload_dir / "documents_meta.json"
         self.documents: Dict[str, DocumentMetadata] = {}
         self._hash_to_id: Dict[str, str] = {}
+        self._structures: Dict[str, DocumentStructure] = {}
         self._load_metadata()
 
     def _load_metadata(self) -> None:
@@ -209,12 +215,25 @@ class DocumentService:
             pages = self.pdf_service.extract_text_and_pages(saved_path)
             extract_latency_ms = max(0.0, (time.perf_counter() - t_extract_start) * 1000.0)
 
-            # 2. Chunk text with section awareness
+            # 1b. Parse structural hierarchy & AST
+            try:
+                structure = self.structure_parser.parse_document(
+                    document_id=doc_id,
+                    content_hash=content_hash,
+                    pages=pages
+                )
+                self._structures[doc_id] = structure
+            except Exception as s_err:
+                logger.warning(f"Failed to parse structure for doc {doc_id}: {s_err}")
+                structure = None
+
+            # 2. Chunk text with section & breadcrumb awareness
             t_chunk_start = time.perf_counter()
             chunks = self.chunking_service.chunk_document(
                 document_id=doc_id,
                 document_name=original_filename,
-                pages=pages
+                pages=pages,
+                structure=structure
             )
             chunk_latency_ms = max(0.0, (time.perf_counter() - t_chunk_start) * 1000.0)
 
@@ -229,7 +248,7 @@ class DocumentService:
             # 3. Generate embeddings
             t_embed_start = time.perf_counter()
             chunk_texts = [c.text for c in chunks]
-            embeddings = self.embedding_service.embed_texts(chunk_texts)
+            embeddings = self.embedding_service.embed_texts(chunk_texts, document_id=doc_id)
             embed_latency_ms = max(0.0, (time.perf_counter() - t_embed_start) * 1000.0)
 
             # 4. Store in vector database
@@ -346,6 +365,32 @@ class DocumentService:
     def get_document(self, document_id: str) -> Optional[DocumentMetadata]:
         return self.documents.get(document_id)
 
+    def get_document_structure(self, document_id: str) -> Optional[DocumentStructure]:
+        """Return parsed document structure, parsing on-demand if needed."""
+        if document_id in self._structures:
+            return self._structures[document_id]
+
+        doc = self.get_document(document_id)
+        if not doc:
+            return None
+
+        # Attempt to parse on-demand from disk if file exists
+        saved_path = self.upload_dir / doc.filename
+        if saved_path.exists():
+            try:
+                pages = self.pdf_service.extract_text_and_pages(saved_path)
+                structure = self.structure_parser.parse_document(
+                    document_id=document_id,
+                    content_hash=doc.content_hash or "",
+                    pages=pages
+                )
+                self._structures[document_id] = structure
+                return structure
+            except Exception as e:
+                logger.warning(f"Could not parse structure on demand for {document_id}: {e}")
+
+        return None
+
     def delete_document(self, document_id: str) -> bool:
         if document_id not in self.documents:
             return False
@@ -353,12 +398,16 @@ class DocumentService:
         meta = self.documents[document_id]
         if meta.content_hash and meta.content_hash in self._hash_to_id:
             del self._hash_to_id[meta.content_hash]
+        if document_id in self._structures:
+            del self._structures[document_id]
 
         file_path = self.upload_dir / meta.filename
         if file_path.exists():
             file_path.unlink()
 
         self.vector_store.delete_document(document_id)
+        if hasattr(self.embedding_service.provider, "remove_document"):
+            self.embedding_service.provider.remove_document(document_id)
         del self.documents[document_id]
         self._save_metadata()
         logger.info(f"Deleted document {document_id}")

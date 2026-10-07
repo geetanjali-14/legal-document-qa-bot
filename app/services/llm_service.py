@@ -250,6 +250,165 @@ class OpenAILLMProvider(BaseLLMProvider):
             )
 
 
+class GeminiLLMProvider(BaseLLMProvider):
+    """
+    Dedicated Google Gemini LLM Provider utilizing the official google-genai SDK.
+    Preserves strict legal RAG evidentiary boundaries (OPT-016), system instruction hierarchy,
+    bounded conversation history, token usage telemetry, and safe error masking.
+    """
+    def __init__(self, api_key: str, model: str = "gemini-3.8-flash"):
+        if not api_key:
+            raise ValueError("Gemini API key is required.")
+        self.api_key = api_key
+        self.model = model
+        # Lazy/direct initialization of official Client
+        from google.genai import Client
+        self._client = Client(api_key=self.api_key)
+
+    def _sanitize_error_message(self, error: Exception) -> str:
+        """Sanitizes error string by masking any API keys or credentials."""
+        raw_msg = str(error)
+        if self.api_key and len(self.api_key) > 4:
+            raw_msg = raw_msg.replace(self.api_key, "[REDACTED_API_KEY]")
+        # Mask any query parameters like key=...
+        raw_msg = re.sub(r'key=[a-zA-Z0-9_\-\.]+', 'key=[REDACTED_API_KEY]', raw_msg)
+        return raw_msg
+
+    def generate_answer(
+        self,
+        question: str,
+        context_chunks: List[str],
+        history: Optional[List[Message]] = None
+    ) -> LLMResponse:
+        if not context_chunks:
+            return LLMResponse(
+                content="I couldn't find enough information in the uploaded document to answer this question.",
+                token_usage_type="unknown",
+                provider="gemini",
+                model=self.model,
+                latency_ms=0.0
+            )
+
+        context_str = "\n\n---\n\n".join(context_chunks)
+
+        # Assemble bounded contents preserving role history
+        from google.genai import types, errors
+
+        contents = []
+        if history:
+            for msg in history[-4:]:
+                gemini_role = "model" if msg.role == "assistant" else "user"
+                contents.append(
+                    types.Content(
+                        role=gemini_role,
+                        parts=[types.Part.from_text(text=msg.content)]
+                    )
+                )
+
+        prompt_content = (
+            f"CONTEXT FROM UPLOADED DOCUMENT (UNTRUSTED EVIDENTIARY DATA):\n"
+            f"{CONTEXT_START_TAG}\n"
+            f"{context_str}\n"
+            f"{CONTEXT_END_TAG}\n\n"
+            f"QUESTION: {question}"
+        )
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=prompt_content)]
+            )
+        )
+
+        max_output_tokens = settings.MAX_OUTPUT_TOKENS or settings.LLM_MAX_TOKENS
+        temperature = settings.LLM_TEMPERATURE
+
+        config = types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            http_options=types.HttpOptions(timeout=45.0)
+        )
+
+        t_start = time.perf_counter()
+        try:
+            response = self._client.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=config
+            )
+        except errors.APIError as e:
+            safe_err = self._sanitize_error_message(e)
+            logger.error(f"Gemini API error (code={e.code}): {safe_err}")
+            raise RuntimeError(f"Gemini API error (code={e.code}): {safe_err}") from None
+        except Exception as e:
+            safe_err = self._sanitize_error_message(e)
+            logger.error(f"Gemini request failure: {safe_err}")
+            raise RuntimeError(f"Gemini request failure: {safe_err}") from None
+
+        latency_ms = max(0.0, (time.perf_counter() - t_start) * 1000.0)
+
+        # Handle candidates, finish reasons, or blocked content
+        content = ""
+        candidates = getattr(response, "candidates", None) or []
+        if candidates:
+            first_candidate = candidates[0]
+            finish_reason = getattr(first_candidate, "finish_reason", None)
+            finish_str = str(finish_reason).upper() if finish_reason else ""
+            if "SAFETY" in finish_str or "BLOCKED" in finish_str:
+                logger.warning(f"Gemini candidate blocked by safety filter: finish_reason={finish_reason}")
+                content = "I couldn't find enough information in the uploaded document to answer this question."
+            else:
+                resp_text = getattr(response, "text", None)
+                if resp_text:
+                    content = resp_text.strip()
+                elif hasattr(first_candidate, "content") and first_candidate.content:
+                    parts = getattr(first_candidate.content, "parts", []) or []
+                    extracted_parts = [getattr(p, "text", "") for p in parts if getattr(p, "text", None)]
+                    content = "".join(extracted_parts).strip()
+
+        if not content:
+            # Fallback if empty candidate or refusal without explicit text
+            content = "I couldn't find enough information in the uploaded document to answer this question."
+
+        # Extract actual usage metadata if available
+        usage_metadata = getattr(response, "usage_metadata", None)
+        inp_tokens = getattr(usage_metadata, "prompt_token_count", None) if usage_metadata else None
+        out_tokens = getattr(usage_metadata, "candidates_token_count", None) if usage_metadata else None
+        tot_tokens = getattr(usage_metadata, "total_token_count", None) if usage_metadata else None
+
+        if tot_tokens is None and inp_tokens is not None and out_tokens is not None:
+            tot_tokens = inp_tokens + out_tokens
+
+        if inp_tokens is not None or out_tokens is not None:
+            return LLMResponse(
+                content=content,
+                input_tokens=inp_tokens,
+                output_tokens=out_tokens,
+                total_tokens=tot_tokens,
+                token_usage_type="actual",
+                latency_ms=round(latency_ms, 2),
+                provider="gemini",
+                model=self.model
+            )
+        else:
+            est_in = estimate_tokens(prompt_content)
+            est_out = estimate_tokens(content)
+            return LLMResponse(
+                content=content,
+                input_tokens=None,
+                output_tokens=None,
+                total_tokens=None,
+                estimated_input_tokens=est_in,
+                estimated_output_tokens=est_out,
+                estimated_total_tokens=est_in + est_out,
+                token_usage_type="estimated",
+                estimation_method="char_ratio_4",
+                latency_ms=round(latency_ms, 2),
+                provider="gemini",
+                model=self.model
+            )
+
+
 class LLMService:
     def __init__(self):
         self.provider = self._resolve_provider()
@@ -266,6 +425,14 @@ class LLMService:
                 api_key=settings.LLM_API_KEY,
                 model=settings.LLM_MODEL,
                 base_url=settings.LLM_BASE_URL
+            )
+        elif provider_name == "gemini":
+            if not settings.LLM_API_KEY:
+                logger.warning("LLM_API_KEY missing for Gemini. Falling back to MockLLMProvider.")
+                return MockLLMProvider()
+            return GeminiLLMProvider(
+                api_key=settings.LLM_API_KEY,
+                model=settings.LLM_MODEL
             )
         else:
             return MockLLMProvider()

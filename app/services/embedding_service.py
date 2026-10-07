@@ -10,12 +10,12 @@ from app.core.logging import logger
 
 class BaseEmbeddingProvider(ABC):
     @abstractmethod
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: List[str], document_id: Optional[str] = None) -> np.ndarray:
         """Embed a list of text strings into an NxDim 2D numpy array."""
         pass
 
     @abstractmethod
-    def embed_query(self, query: str) -> np.ndarray:
+    def embed_query(self, query: str, document_id: Optional[str] = None) -> np.ndarray:
         """Embed a single query string into a 1xDim 2D numpy array."""
         pass
 
@@ -40,51 +40,80 @@ class MockEmbeddingProvider(BaseEmbeddingProvider):
             vec = vec / norm
         return vec
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: List[str], document_id: Optional[str] = None) -> np.ndarray:
         matrix = [self._hash_vector(t) for t in texts]
         return np.array(matrix, dtype=np.float32)
 
-    def embed_query(self, query: str) -> np.ndarray:
+    def embed_query(self, query: str, document_id: Optional[str] = None) -> np.ndarray:
         return np.array([self._hash_vector(query)], dtype=np.float32)
 
 
 class TFIDFEmbeddingProvider(BaseEmbeddingProvider):
     """
     High-quality local vocabulary-grounded embedding provider using scikit-learn TF-IDF.
-    Provides real semantic token overlap and document weighting without external API keys.
+    Provides document-scoped vectorizers to prevent cross-document vocabulary contamination
+    and ensure query vector dimensions always match stored document vector dimensions.
     """
     def __init__(self, max_features: int = 1024):
         self.provider_name = "tfidf"
         self.model_name = "tfidf-scikit"
         self.max_features = max_features
-        self.vectorizer = TfidfVectorizer(
-            max_features=max_features,
+        self.global_vectorizer = self._create_vectorizer()
+        self.is_fitted = False
+        self.corpus_history: List[str] = []
+        # Document-specific vectorizers: document_id -> TfidfVectorizer
+        self.doc_vectorizers: dict = {}
+
+    def _create_vectorizer(self) -> TfidfVectorizer:
+        return TfidfVectorizer(
+            max_features=self.max_features,
             stop_words="english",
             token_pattern=r'(?u)\b\w+\b'
         )
-        self.is_fitted = False
-        self.corpus_history: List[str] = []
+
+    def fit_document(self, document_id: str, texts: List[str]) -> None:
+        """Fit a dedicated vocabulary vectorizer for a specific document."""
+        if not texts:
+            return
+        vec = self._create_vectorizer()
+        vec.fit(texts)
+        self.doc_vectorizers[document_id] = vec
+        logger.info(f"Fitted TF-IDF vectorizer for document {document_id} (vocab_size={len(vec.vocabulary_)})")
+
+    def remove_document(self, document_id: str) -> None:
+        """Remove document-scoped vectorizer when document is deleted."""
+        self.doc_vectorizers.pop(document_id, None)
 
     def fit_corpus(self, texts: List[str]) -> None:
         self.corpus_history.extend(texts)
-        self.vectorizer.fit(self.corpus_history)
+        self.global_vectorizer.fit(self.corpus_history)
         self.is_fitted = True
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: List[str], document_id: Optional[str] = None) -> np.ndarray:
+        if document_id:
+            vec = self._create_vectorizer()
+            vec.fit(texts)
+            self.doc_vectorizers[document_id] = vec
+            sparse_matrix = vec.transform(texts)
+            return sparse_matrix.toarray().astype(np.float32)
+
         if not self.is_fitted:
             self.fit_corpus(texts)
         else:
-            # Re-fit or update if new vocabulary appears
             self.fit_corpus(texts)
-        sparse_matrix = self.vectorizer.transform(texts)
+        sparse_matrix = self.global_vectorizer.transform(texts)
         return sparse_matrix.toarray().astype(np.float32)
 
-    def embed_query(self, query: str) -> np.ndarray:
+    def embed_query(self, query: str, document_id: Optional[str] = None) -> np.ndarray:
+        if document_id and document_id in self.doc_vectorizers:
+            vec = self.doc_vectorizers[document_id]
+            sparse_vec = vec.transform([query])
+            return sparse_vec.toarray().astype(np.float32)
+
         if not self.is_fitted:
-            # Emergency fit with query if nothing indexed yet
-            self.vectorizer.fit([query])
+            self.global_vectorizer.fit([query])
             self.is_fitted = True
-        sparse_vec = self.vectorizer.transform([query])
+        sparse_vec = self.global_vectorizer.transform([query])
         return sparse_vec.toarray().astype(np.float32)
 
 
@@ -110,13 +139,13 @@ class FastEmbedProvider(BaseEmbeddingProvider):
         self._model = TextEmbedding(model_name=self.model_name)
         self.last_tokens: Optional[int] = None
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: List[str], document_id: Optional[str] = None) -> np.ndarray:
         if not texts:
             return np.empty((0, 384), dtype=np.float32)
         embeddings = list(self._model.embed(texts))
         return np.array(embeddings, dtype=np.float32)
 
-    def embed_query(self, query: str) -> np.ndarray:
+    def embed_query(self, query: str, document_id: Optional[str] = None) -> np.ndarray:
         embeddings = list(self._model.embed([query]))
         return np.array(embeddings, dtype=np.float32)
 
@@ -131,7 +160,7 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
         self.base_url = (base_url or "https://api.openai.com/v1").rstrip("/") + "/embeddings"
         self.last_tokens: Optional[int] = None
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: List[str], document_id: Optional[str] = None) -> np.ndarray:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -150,8 +179,8 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
             embeddings = [item["embedding"] for item in data]
             return np.array(embeddings, dtype=np.float32)
 
-    def embed_query(self, query: str) -> np.ndarray:
-        return self.embed_texts([query])
+    def embed_query(self, query: str, document_id: Optional[str] = None) -> np.ndarray:
+        return self.embed_texts([query], document_id=document_id)
 
 
 class EmbeddingService:
@@ -189,16 +218,16 @@ class EmbeddingService:
         else:
             return TFIDFEmbeddingProvider()
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: List[str], document_id: Optional[str] = None) -> np.ndarray:
         t_start = time.perf_counter()
-        result = self.provider.embed_texts(texts)
+        result = self.provider.embed_texts(texts, document_id=document_id)
         self.last_latency_ms = max(0.0, (time.perf_counter() - t_start) * 1000.0)
         self.last_tokens = getattr(self.provider, "last_tokens", None)
         return result
 
-    def embed_query(self, query: str) -> np.ndarray:
+    def embed_query(self, query: str, document_id: Optional[str] = None) -> np.ndarray:
         t_start = time.perf_counter()
-        result = self.provider.embed_query(query)
+        result = self.provider.embed_query(query, document_id=document_id)
         self.last_latency_ms = max(0.0, (time.perf_counter() - t_start) * 1000.0)
         self.last_tokens = getattr(self.provider, "last_tokens", None)
         return result

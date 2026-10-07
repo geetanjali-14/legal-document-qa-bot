@@ -57,11 +57,7 @@ def isolated_eval_env():
             emb = EmbeddingService()
             pdf_s = PDFService()
             chunk_s = ChunkingService()
-            doc_s = DocumentService(pdf_s, chunk_s, emb, vs)
-            doc_s.upload_dir = upload_dir
-            doc_s.metadata_file = upload_dir / "documents_meta.json"
-            doc_s.documents = {}
-            doc_s._hash_to_id = {}
+            doc_s = DocumentService(pdf_s, chunk_s, emb, vs, upload_dir=upload_dir)
             ret_s = RetrievalService(emb, vs)
             llm_s = LLMService()
             cite_s = CitationService()

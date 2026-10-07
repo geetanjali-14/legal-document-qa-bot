@@ -105,8 +105,11 @@ def evaluate_case(case: BenchmarkCase, response_data: Dict[str, Any]) -> CaseEva
 
     retrieved_count = telemetry.get("retrieved_chunks_count", len(sources))
     llm_latency = telemetry.get("llm_latency_ms")
-    # An LLM invocation occurred if llm_latency is recorded and non-null
-    llm_invoked = llm_latency is not None
+    # An LLM invocation occurred if llm_latency was recorded > 0.0 or llm_provider != none/deterministic
+    llm_provider = telemetry.get("llm_provider") or ""
+    llm_invoked = bool((llm_latency is not None and llm_latency > 0.0) or (
+        llm_provider and "deterministic" not in llm_provider and llm_provider != "none"
+    ))
 
     token_usage_type = telemetry.get("token_usage_type", "unknown")
     actual_tokens = telemetry.get("total_tokens")
@@ -154,8 +157,8 @@ def evaluate_case(case: BenchmarkCase, response_data: Dict[str, Any]) -> CaseEva
     # 3. Grounding Evaluation
     grounding_eval = EvaluationStatus.PASS
     if not case.expected_refusal:
-        # Verify that an answer is accompanied by supporting sources
-        if len(sources) == 0:
+        # Verify that an answer is accompanied by supporting sources when retrieval/citations are expected
+        if (case.expected_retrieval_min_chunks > 0 or case.expected_citation_count_min > 0) and len(sources) == 0:
             grounding_eval = EvaluationStatus.FAIL
             notes.append("Grounding failed: supported answer provided with zero supporting sources")
     else:

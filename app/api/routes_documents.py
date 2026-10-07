@@ -112,18 +112,38 @@ async def get_document_file(document_id: str, doc_service: DocumentService = Dep
             detail=f"Document with ID {document_id} was not found."
         )
 
-    file_path = doc_service.upload_dir / doc.filename
-    if not file_path.exists():
+    file_path = (doc_service.upload_dir / doc.filename).resolve()
+    upload_root = doc_service.upload_dir.resolve()
+    if not str(file_path).startswith(str(upload_root)) or not file_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Stored PDF for document {document_id} was not found."
         )
 
+    # Sanitize header filename to prevent header injection or unsafe characters
+    safe_download_name = doc_service.sanitize_filename(doc.original_filename or "document.pdf")
+
     return FileResponse(
         path=str(file_path),
         media_type="application/pdf",
-        filename=doc.original_filename,
-        headers={"Content-Disposition": f"inline; filename=\"{doc.original_filename}\""}
+        filename=safe_download_name,
+        headers={"Content-Disposition": f"inline; filename=\"{safe_download_name}\""}
+    )
+
+
+@router.get("/{document_id}/structure", response_model=ApiResponse)
+async def get_document_structure(document_id: str, doc_service: DocumentService = Depends(get_document_service)):
+    """Retrieve hierarchical legal AST, sections, definitions, and cross-references."""
+    structure = doc_service.get_document_structure(document_id)
+    if not structure:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Structural analysis for document {document_id} was not found."
+        )
+    return ApiResponse(
+        success=True,
+        message="Document structure retrieved.",
+        data=structure.model_dump(mode="json")
     )
 
 

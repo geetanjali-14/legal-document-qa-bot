@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     # Ingestion & storage
     UPLOAD_DIR: Path = Path("data/uploads")
     VECTOR_STORE_DIR: Path = Path("data/vector_store")
+    DATABASE_PATH: Path = Path("data/legal_qa.db")
+    DATABASE_URL: str = ""  # e.g. postgresql://user:pass@localhost:5432/legal_qa (empty falls back to sqlite)
     MAX_FILE_SIZE_MB: int = 25
     MAX_DOCUMENT_PAGES: int = 500
     MAX_CHUNKS_PER_DOC: int = 5000
@@ -40,9 +42,11 @@ class Settings(BaseSettings):
     MAX_QUERY_CHARS: int = 2000
     MAX_PROMPT_TOKENS: int = 4096
     MAX_OUTPUT_TOKENS: int = 1024
+    MAX_HISTORY_TURNS: int = 3
+    MAX_HISTORY_TOKENS: int = 500
 
     # LLM Provider
-    LLM_PROVIDER: Literal["mock", "openai", "anthropic", "ollama", "custom_http"] = "mock"
+    LLM_PROVIDER: Literal["mock", "openai", "anthropic", "ollama", "gemini", "custom_http"] = "mock"
     LLM_API_KEY: str = ""
     LLM_MODEL: str = "gpt-4o-mini"
     LLM_BASE_URL: str = ""

@@ -14,8 +14,7 @@
         <div class="brand">
           <span class="icon" aria-hidden="true">§</span>
           <div class="brand-copy">
-            <h1>Jurisprudence</h1>
-            <span>LEGAL DOCUMENT QA</span>
+            <h1>LEGAL DOCUMENT QA</h1>
           </div>
         </div>
       </div>
@@ -52,6 +51,19 @@
           </div>
         </section>
 
+        <section class="conversations-card">
+          <div class="section-title">
+            <div>
+              <span class="section-kicker">CONSULTATION THREADS</span>
+              <h2>Conversations</h2>
+            </div>
+            <button id="newChatBtn" class="icon-btn" type="button" title="New conversation" aria-label="Start new conversation">+</button>
+          </div>
+          <div id="conversationsList" class="conversations-list">
+            <p class="empty-text">No active threads.</p>
+          </div>
+        </section>
+
         <div id="uploadStatus" class="status-box hidden" role="status" aria-live="polite"></div>
 
         <footer class="sidebar-footer">
@@ -68,7 +80,7 @@
         <div class="active-doc-banner" id="activeDocBanner">
           <div class="doc-info">
             <span class="label">CURRENT CONTEXT</span>
-            <span id="activeDocStats" class="badge">Select a document</span>
+            <span id="activeDocStats" class="badge">None selected</span>
           </div>
           <div class="banner-actions">
             <button type="button" id="viewActiveDocBtn" class="secondary-action" disabled>View PDF</button>

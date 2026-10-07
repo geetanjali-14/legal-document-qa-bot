@@ -170,67 +170,51 @@ The app should return:
 - section name
 - confidence status
 
-## Run the Test Suite
+## Run the Test Suite & Offline Evaluation Benchmark
 
 From the project root:
 
 ```bash
-PYTHONPATH=. ./venv/bin/pytest -q
+# Run pytest verification suite (159 passing tests)
+PYTHONPATH=. ./venv/bin/pytest -v
+
+# Run the Legal RAG Offline Evaluation Benchmark (31/31 passing cases)
+PYTHONPATH=. ./venv/bin/python tests/evaluation/run_benchmark.py
 ```
 
-At the time of writing, the verified baseline is:
+Current verified baseline:
+- **Pytest**: 159 passed, 0 failed
+- **Offline RAG Benchmark**: 31/31 evaluated passed (100% across Direct Fact, Multi-Clause, Unanswerable, Adversarial Injection, Citation Integrity, Defined Term, Structure Navigation, Obligations, Risk Analysis, and Temporal Reasoning)
 
-- 71 passed
-- 1 warning
-- 0 failed
+## Production Deployment & Containerization
+
+A hardened multi-stage Docker container is provided:
+
+```bash
+# Build the production Docker image
+docker build -t legal-doc-intelligence:latest .
+
+# Run container with persistent storage
+docker run -p 8000:8000 \
+  -e DATABASE_URL=postgresql://user:pass@db:5432/legal_qa \
+  -v $(pwd)/data:/app/data \
+  legal-doc-intelligence:latest
+```
+
+Healthcheck is actively monitored at `/api/health`.
 
 ## Default Configuration Notes
 
 The app defaults to:
 
-- `LLM_PROVIDER=mock`
-- `EMBEDDING_PROVIDER=tfidf`
-
-This makes the local app easier to test without external API keys. If you want to switch to OpenAI or another provider, update the values in `.env`.
-
-## Troubleshooting
-
-### App fails to start
-
-Check whether dependencies are installed:
-
-```bash
-pip install -r requirements.txt
-```
-
-Also confirm the virtual environment is active.
-
-### PDF upload is rejected
-
-Make sure the file is a real PDF and ends with `.pdf`.
-
-### No results returned
-
-- confirm the document uploaded successfully
-- verify the `document_id`
-- ask a question directly supported by the document content
-
-### Tests fail
-
-Run this again from the project root:
-
-```bash
-PYTHONPATH=. ./venv/bin/pytest -q
-```
+- `LLM_PROVIDER=mock` (supports `mock`, `openai`, `gemini`)
+- `EMBEDDING_PROVIDER=tfidf` (supports `tfidf`, `fastembed`, `openai`)
+- `DATABASE_URL=""` (defaults to safe SQLite with WAL mode at `data/legal_qa.db`; compatible with PostgreSQL in production)
 
 ## Additional Docs
 
-The repo also contains deeper product and technical documentation here:
+The repo contains comprehensive documentation:
 
-- [docs/PRD.md](docs/PRD.md)
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md)
-
-## Notes
-
-This project is a working local legal document Q&A system for document-grounded retrieval and citation-based answers. It is best suited for local development and demos rather than production deployment without additional security, authentication, and deployment hardening.
+- [docs/PRD.md](docs/PRD.md) - Product Requirements Document covering milestones P0 through P4.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - System architecture, agent orchestrator, determinism tools, and security boundaries.
+- [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md) - Development plan, execution status, and verification metrics.

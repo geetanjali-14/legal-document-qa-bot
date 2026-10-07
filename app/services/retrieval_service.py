@@ -21,6 +21,11 @@ STOPWORDS = {
 }
 
 
+GENERIC_LEGAL_TERMS = {
+    "client", "vendor", "party", "parties", "agreement", "contract", "section", "document"
+}
+
+
 class RetrievalService:
     def __init__(self, embedding_service: EmbeddingService, vector_store: VectorStore):
         self.embedding_service = embedding_service
@@ -30,8 +35,8 @@ class RetrievalService:
 
     @staticmethod
     def extract_content_words(text: str) -> Set[str]:
-        """Extract lowercase content words (excluding common stop words)."""
-        words = set(re.findall(r"[a-zA-Z]{3,}", text.lower()))
+        """Extract lowercase content words (excluding common stop words), preserving hyphenated terms."""
+        words = set(re.findall(r"[a-zA-Z]{3,}(?:-[a-zA-Z]{3,})*", text.lower()))
         return words - STOPWORDS
 
     def is_context_relevant(self, query: str, results: List[Tuple[DocumentChunk, float]]) -> bool:
@@ -53,9 +58,10 @@ class RetrievalService:
 
         matching_words = query_words & chunk_words
         overlap_ratio = len(matching_words) / len(query_words)
+        non_generic_matches = matching_words - GENERIC_LEGAL_TERMS
 
-        # High semantic similarity with at least one matching content word
-        if top_score >= settings.RELEVANCE_CONFIDENCE_THRESHOLD and len(matching_words) >= 1:
+        # High semantic similarity with at least one matching content word (excluding purely generic legal terms)
+        if top_score >= settings.RELEVANCE_CONFIDENCE_THRESHOLD and len(non_generic_matches) >= 1:
             return True
 
         # Moderate semantic similarity with substantial query content word coverage
@@ -87,14 +93,20 @@ class RetrievalService:
 
         logger.info(f"Retrieving for doc={document_id}, query='{query[:50]}...', top_k={k}")
 
-        # If vocabulary-based embedding provider (e.g. TF-IDF) is not fitted, fit from indexed chunks
-        if hasattr(self.embedding_service.provider, "fit_corpus") and not getattr(self.embedding_service.provider, "is_fitted", False):
+        # If vocabulary-based embedding provider (e.g. TF-IDF) has not fitted this document, fit from indexed chunks
+        if hasattr(self.embedding_service.provider, "fit_document"):
+            doc_vecs = getattr(self.embedding_service.provider, "doc_vectorizers", {})
+            if document_id not in doc_vecs:
+                doc_chunks = self.vector_store.chunks_by_doc.get(document_id, [])
+                if doc_chunks:
+                    self.embedding_service.provider.fit_document(document_id, [c.text for c in doc_chunks])
+        elif hasattr(self.embedding_service.provider, "fit_corpus") and not getattr(self.embedding_service.provider, "is_fitted", False):
             doc_chunks = self.vector_store.chunks_by_doc.get(document_id, [])
             if doc_chunks:
                 self.embedding_service.provider.fit_corpus([c.text for c in doc_chunks])
 
         t_embed_start = time.perf_counter()
-        query_vector = self.embedding_service.embed_query(query)
+        query_vector = self.embedding_service.embed_query(query, document_id=document_id)
         self.last_embedding_latency_ms = max(0.0, (time.perf_counter() - t_embed_start) * 1000.0)
 
         raw_results = self.vector_store.search(
@@ -114,16 +126,38 @@ class RetrievalService:
         else:
             results = raw_results
 
+        # Context Deduplication (P3-RETRIEVAL): remove chunks with identical text or nested overlaps
+        deduped_results = self.deduplicate_chunks(results)
+
         logger.info(
-            f"Retrieved {len(results)} chunks above threshold {sim_threshold} "
-            f"(raw={len(raw_results)}, retrieval={self.last_retrieval_latency_ms:.2f}ms, "
+            f"Retrieved {len(deduped_results)} chunks above threshold {sim_threshold} "
+            f"(raw={len(raw_results)}, deduped={len(deduped_results)}, retrieval={self.last_retrieval_latency_ms:.2f}ms, "
             f"embedding={self.last_embedding_latency_ms:.2f}ms)"
         )
 
-        for chunk, score in results:
+        for chunk, score in deduped_results:
             logger.info(
                 f"Retrieved chunk score={score:.4f}, "
                 f"section={chunk.section}, page={chunk.page_number}"
             )
-        return results
+        return deduped_results
+
+    def deduplicate_chunks(self, results: List[Tuple[DocumentChunk, float]]) -> List[Tuple[DocumentChunk, float]]:
+        """Remove duplicate or heavily subsumed chunks while preserving highest-ranking score."""
+        seen_texts = set()
+        deduped = []
+        for chunk, score in results:
+            clean = " ".join(chunk.text.split())
+            if clean in seen_texts:
+                continue
+            # Check substantial substring overlap (>85% character length match)
+            is_redundant = False
+            for seen in seen_texts:
+                if len(clean) > 80 and clean in seen:
+                    is_redundant = True
+                    break
+            if not is_redundant:
+                seen_texts.add(clean)
+                deduped.append((chunk, score))
+        return deduped
 

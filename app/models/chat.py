@@ -23,6 +23,7 @@ class ChatRequest(BaseModel):
     question: str = Field(..., min_length=2)
     history: Optional[List[Message]] = Field(default_factory=list)
     top_k: Optional[int] = Field(default=None, ge=1)
+    conversation_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -35,4 +36,6 @@ class ChatResponse(BaseModel):
     )
     request_id: Optional[str] = None
     telemetry: Optional[ChatTelemetry] = None
+    conversation_id: Optional[str] = None
+    audit_trace: Optional[dict] = None
 

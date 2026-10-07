@@ -17,6 +17,7 @@ class DocumentChunk(BaseModel):
     section: Optional[str] = "General"
     text: str
     token_count: Optional[int] = None
+    breadcrumbs: List[str] = Field(default_factory=list)
 
 
 class DocumentMetadata(BaseModel):

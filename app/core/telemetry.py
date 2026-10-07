@@ -57,6 +57,30 @@ class PricingRegistry:
                 input_price_per_million=0.13,
                 output_price_per_million=0.0
             ),
+            ModelPricing(
+                provider="gemini",
+                model="gemini-3.8-flash",
+                input_price_per_million=0.075,
+                output_price_per_million=0.30
+            ),
+            ModelPricing(
+                provider="gemini",
+                model="gemini-2.5-flash",
+                input_price_per_million=0.075,
+                output_price_per_million=0.30
+            ),
+            ModelPricing(
+                provider="gemini",
+                model="gemini-1.5-flash",
+                input_price_per_million=0.075,
+                output_price_per_million=0.30
+            ),
+            ModelPricing(
+                provider="gemini",
+                model="gemini-1.5-pro",
+                input_price_per_million=1.25,
+                output_price_per_million=5.00
+            ),
         ]
         for p in defaults:
             self.register(p)

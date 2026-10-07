@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Any
 import fitz  # PyMuPDF
 from app.models.document import PageContent
 from app.core.config import settings
@@ -75,7 +75,7 @@ class PDFService:
                     for line in lines:
                         if not formatted_lines:
                             formatted_lines.append(line)
-                        elif re.match(r'^(?:(?:Section|Article|Clause|\d+\.(?:\d+\.)*)\s+[A-Z]|[A-Z\s]{4,40}:?$)', line):
+                        elif re.match(r'^(?:(?:Section|SECTION|Article|ARTICLE|Clause|CLAUSE|\d+(?:\.\d+)*)\.?(?:\s+[A-Z]|$)|[A-Z\s]{4,40}:?$)', line):
                             formatted_lines.append(line)
                         else:
                             formatted_lines[-1] += " " + line
@@ -83,6 +83,13 @@ class PDFService:
 
                 raw_text = "\n\n".join(cleaned_blocks) if cleaned_blocks else page.get_text("text")
                 cleaned = self.clean_text(raw_text)
+
+                # P4-DOC: Selective OCR hook for image-based/low-text pages
+                if len(cleaned) < self.min_char_threshold_per_page:
+                    cleaned_ocr = self._attempt_selective_ocr(page, page_index + 1)
+                    if cleaned_ocr:
+                        cleaned = cleaned_ocr
+
                 char_count = len(cleaned)
                 total_chars += char_count
 
@@ -107,3 +114,21 @@ class PDFService:
 
         finally:
             doc.close()
+
+    def _attempt_selective_ocr(self, page: Any, page_num: int) -> Optional[str]:
+        """Attempt OCR on a single low-text page if OCR provider is available."""
+        try:
+            import pytesseract
+            from PIL import Image
+            import io
+
+            pix = page.get_pixmap(dpi=150)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            ocr_text = pytesseract.image_to_string(img)
+            cleaned = self.clean_text(ocr_text)
+            if cleaned:
+                logger.info(f"[Selective OCR] Successfully extracted {len(cleaned)} chars on page {page_num}")
+                return f"[OCR Derived] {cleaned}"
+        except Exception as ocr_err:
+            logger.debug(f"[Selective OCR] OCR unavailable for page {page_num}: {ocr_err}")
+        return None

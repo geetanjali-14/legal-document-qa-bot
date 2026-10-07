@@ -18,6 +18,8 @@ data/uploads/*
 data/vector_store/*
 !data/vector_store/.gitkeep
 *.db
+*.db-shm
+*.db-wal
 *.sqlite3
 
 # Logs & Testing
@@ -26,3 +28,5 @@ data/vector_store/*
 .coverage
 htmlcov/
 .vscode/
+legal_qa_test_report.txt
+legal_qa_ui_test_plan.md

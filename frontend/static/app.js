@@ -1,4 +1,5 @@
 let activeDocumentId = null;
+let activeConversationId = null;
 let chatHistory = [];
 
 const fileInput = document.getElementById("fileInput");
@@ -6,6 +7,8 @@ const dropZone = document.getElementById("dropZone");
 const uploadStatus = document.getElementById("uploadStatus");
 const documentsList = document.getElementById("documentsList");
 const refreshDocsBtn = document.getElementById("refreshDocsBtn");
+const conversationsList = document.getElementById("conversationsList");
+const newChatBtn = document.getElementById("newChatBtn");
 
 const activeDocName = document.getElementById("activeDocName");
 const activeDocStats = document.getElementById("activeDocStats");
@@ -34,10 +37,48 @@ const sidebarToggle = document.getElementById("sidebarToggle");
 const sidebarBackdrop = document.getElementById("sidebarBackdrop");
 const citationRecords = new WeakMap();
 
+function resetWorkspaceState() {
+  activeDocumentId = null;
+  activeConversationId = null;
+  chatHistory = [];
+  chatMessages.replaceChildren(emptyState);
+  emptyState.hidden = false;
+  closeSourceInspector();
+  activeDocName.textContent = "No document selected";
+  activeDocStats.textContent = "None selected";
+  inputDocName.textContent = "Document context unavailable";
+  emptyDocName.textContent = "a selected document";
+  readinessStatus.textContent = "Awaiting document";
+  readinessStatus.classList.remove("ready");
+  readinessDetails.textContent = "Select an indexed document to view its available page and chunk counts.";
+  readinessPages.textContent = "—";
+  readinessChunks.textContent = "—";
+  questionInput.disabled = true;
+  sendBtn.disabled = true;
+  viewActiveDocBtn.disabled = true;
+  questionInput.placeholder = "Select a document first to ask questions...";
+  document.querySelectorAll(".question-suggestion").forEach((suggestion) => {
+    suggestion.disabled = true;
+  });
+}
+
 // Event Listeners
-document.addEventListener("DOMContentLoaded", () => {
-  fetchDocuments();
+document.addEventListener("DOMContentLoaded", async () => {
+  resetWorkspaceState();
+  await fetchDocuments();
+  await fetchConversations();
+
+  // Restore saved active conversation on page reload if present
+  const savedActiveConv = localStorage.getItem("legal_qa_active_conv");
+  if (savedActiveConv) {
+    activeConversationId = savedActiveConv;
+    await loadSavedConversation(savedActiveConv);
+  }
 });
+
+if (newChatBtn) {
+  newChatBtn.addEventListener("click", startNewConversation);
+}
 
 uploadOpenBtn.addEventListener("click", () => uploadDialog.showModal());
 viewActiveDocBtn.addEventListener("click", () => {
@@ -146,14 +187,19 @@ chatForm.addEventListener("submit", async (e) => {
   setChatLoading(true);
 
   try {
+    const payload = {
+      document_id: activeDocumentId,
+      question: question,
+      history: chatHistory
+    };
+    if (activeConversationId) {
+      payload.conversation_id = activeConversationId;
+    }
+
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        document_id: activeDocumentId,
-        question: question,
-        history: chatHistory
-      })
+      body: JSON.stringify(payload)
     });
 
     const result = await res.json();
@@ -161,8 +207,17 @@ chatForm.addEventListener("submit", async (e) => {
       throw new Error(result.detail || "Error querying legal document.");
     }
 
-    const { answer, sources, confidence, disclaimer, telemetry } = result.data;
-    appendAssistantMessage(answer, sources, confidence, disclaimer, telemetry);
+    const { answer, sources, confidence, disclaimer, telemetry, conversation_id, audit_trace } = result.data;
+    if (conversation_id) {
+      activeConversationId = conversation_id;
+      localStorage.setItem("legal_qa_active_conv", conversation_id);
+      if (activeDocumentId) {
+        localStorage.setItem(`legal_qa_conv_${activeDocumentId}`, conversation_id);
+      }
+      fetchConversations();
+    }
+
+    appendAssistantMessage(answer, sources, confidence, disclaimer, telemetry, audit_trace);
     chatHistory.push({ role: "user", content: question });
     chatHistory.push({ role: "assistant", content: answer });
 
@@ -298,6 +353,10 @@ function selectDocument(id, name, pages, chunks) {
     chatMessages.replaceChildren(emptyState);
     emptyState.hidden = false;
     closeSourceInspector();
+    activeConversationId = localStorage.getItem(`legal_qa_conv_${id}`) || null;
+    if (activeConversationId) {
+      loadSavedConversation(activeConversationId);
+    }
   }
   activeDocumentId = id;
   activeDocName.textContent = name;
@@ -381,17 +440,40 @@ function appendUserMessage(text) {
   chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-function appendAssistantMessage(text, sources = [], confidence = "supported", disclaimer = "", telemetry = null) {
+function appendAssistantMessage(text, sources = [], confidence = "supported", disclaimer = "", telemetry = null, auditTrace = null) {
   const msgEl = document.createElement("div");
   msgEl.className = "message assistant";
   msgEl.dataset.confidence = confidence;
   const content = document.createElement("div");
   content.className = "message-content";
 
+  const statusRow = document.createElement("div");
+  statusRow.className = "status-row";
+  statusRow.style.display = "flex";
+  statusRow.style.alignItems = "center";
+  statusRow.style.gap = "8px";
+  statusRow.style.flexWrap = "wrap";
+  statusRow.style.marginBottom = "8px";
+
   const answerStatus = document.createElement("div");
   answerStatus.className = `answer-status ${getConfidenceClass(confidence)}`;
   answerStatus.textContent = getConfidenceLabel(confidence);
-  content.appendChild(answerStatus);
+  statusRow.appendChild(answerStatus);
+
+  if (auditTrace?.selected_tools?.length) {
+    const toolBadge = document.createElement("span");
+    toolBadge.className = "tool-badge";
+    toolBadge.style.fontSize = "11px";
+    toolBadge.style.padding = "2px 8px";
+    toolBadge.style.borderRadius = "12px";
+    toolBadge.style.background = "#e0e7ff";
+    toolBadge.style.color = "#3730a3";
+    toolBadge.style.fontWeight = "600";
+    toolBadge.textContent = `🛠 ${auditTrace.selected_tools.join(", ")}`;
+    statusRow.appendChild(toolBadge);
+  }
+
+  content.appendChild(statusRow);
 
   const answer = document.createElement("p");
   answer.textContent = text;
@@ -465,8 +547,10 @@ function appendAssistantMessage(text, sources = [], confidence = "supported", di
 
 function getConfidenceClass(confidence) {
   if (confidence === "partially_supported") return "partial";
-  if (confidence === "insufficient_context") return "insufficient";
+  if (confidence === "insufficient_context" || confidence === "not_found") return "insufficient";
   if (confidence === "low_confidence") return "low";
+  if (confidence === "clarification_required") return "partial";
+  if (confidence === "conflicting_evidence") return "low";
   if (confidence === "error") return "error";
   return "supported";
 }
@@ -476,7 +560,10 @@ function getConfidenceLabel(confidence) {
     supported: "Supported by retrieved evidence",
     partially_supported: "Partially supported by document",
     insufficient_context: "Insufficient context",
+    not_found: "Information not found in document",
     low_confidence: "Low confidence",
+    clarification_required: "Clarification required",
+    conflicting_evidence: "Conflicting evidence identified",
     error: "Request could not be completed"
   };
   return labels[confidence] || "Response status unavailable";
@@ -506,5 +593,144 @@ function setChatLoading(isLoading) {
   } else {
     sendBtn.innerHTML = "<span>Ask</span> ➔";
     questionInput.focus();
+  }
+}
+
+async function fetchConversations() {
+  if (!conversationsList) return;
+  try {
+    const res = await fetch("/api/conversations?limit=30");
+    if (!res.ok) return;
+    const result = await res.json();
+    const convs = result.data || [];
+    renderConversationsList(convs);
+  } catch (err) {
+    console.error("Error fetching conversations:", err);
+  }
+}
+
+function renderConversationsList(convs) {
+  if (!conversationsList) return;
+  if (convs.length === 0) {
+    const emptyP = document.createElement("p");
+    emptyP.className = "empty-text";
+    emptyP.textContent = "No active threads.";
+    conversationsList.replaceChildren(emptyP);
+    return;
+  }
+
+  const items = convs.map((conv) => {
+    const item = document.createElement("div");
+    item.className = `conv-item ${conv.conversation_id === activeConversationId ? "active" : ""}`;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "conv-item-btn";
+
+    const titleSpan = document.createElement("span");
+    titleSpan.className = "conv-item-title";
+    titleSpan.textContent = conv.title || "Consultation Thread";
+
+    const metaSpan = document.createElement("span");
+    metaSpan.className = "conv-item-meta";
+    metaSpan.textContent = `${conv.message_count || 0} messages`;
+
+    btn.append(titleSpan, metaSpan);
+    btn.addEventListener("click", () => switchConversation(conv.conversation_id));
+
+    item.appendChild(btn);
+    return item;
+  });
+
+  conversationsList.replaceChildren(...items);
+}
+
+async function switchConversation(conversationId) {
+  if (!conversationId) return;
+  activeConversationId = conversationId;
+  localStorage.setItem("legal_qa_active_conv", conversationId);
+  await loadSavedConversation(conversationId);
+  fetchConversations();
+}
+
+async function startNewConversation() {
+  if (!activeDocumentId) {
+    alert("Please select a document first before starting a new conversation.");
+    return;
+  }
+  try {
+    const res = await fetch("/api/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        document_id: activeDocumentId,
+        title: `Thread - ${activeDocName.textContent || "Legal Q&A"}`
+      })
+    });
+    if (!res.ok) return;
+    const result = await res.json();
+    const conv = result.data;
+    activeConversationId = conv.conversation_id;
+    localStorage.setItem(`legal_qa_conv_${activeDocumentId}`, conv.conversation_id);
+    localStorage.setItem("legal_qa_active_conv", conv.conversation_id);
+    chatHistory = [];
+    chatMessages.replaceChildren(emptyState);
+    emptyState.hidden = false;
+    closeSourceInspector();
+    fetchConversations();
+    questionInput.focus();
+  } catch (err) {
+    console.error("Failed to create new conversation:", err);
+  }
+}
+
+async function loadSavedConversation(conversationId) {
+  try {
+    const res = await fetch(`/api/conversations/${conversationId}`);
+    if (!res.ok) return;
+    const result = await res.json();
+    const conv = result.data;
+    if (!conv) return;
+
+    // If conversation is bound to a document not yet active, auto-activate if available
+    if (conv.document_ids && conv.document_ids.length > 0 && !activeDocumentId) {
+      const primaryDocId = conv.document_ids[0];
+      const docRes = await fetch(`/api/documents/${primaryDocId}`);
+      if (docRes.ok) {
+        const docData = (await docRes.json()).data;
+        if (docData) {
+          selectDocument(docData.document_id, docData.original_filename || docData.filename, docData.page_count, docData.chunk_count);
+        }
+      }
+    }
+
+    if (!conv.messages || conv.messages.length === 0) {
+      chatMessages.replaceChildren(emptyState);
+      emptyState.hidden = false;
+      chatHistory = [];
+      return;
+    }
+
+    emptyState.hidden = true;
+    chatMessages.replaceChildren();
+    chatHistory = [];
+
+    for (const msg of conv.messages) {
+      if (msg.role === "user") {
+        appendUserMessage(msg.content);
+        chatHistory.push({ role: "user", content: msg.content });
+      } else if (msg.role === "assistant") {
+        appendAssistantMessage(
+          msg.content,
+          msg.sources || [],
+          msg.evidence_state || "supported",
+          "This tool provides information extracted from uploaded legal documents and is not a substitute for formal legal advice from a qualified attorney.",
+          msg.telemetry
+        );
+        chatHistory.push({ role: "assistant", content: msg.content });
+      }
+    }
+  } catch (err) {
+    console.error("Failed to restore saved conversation:", err);
   }
 }

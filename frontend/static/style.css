@@ -431,6 +431,77 @@ input {
   font-weight: 700;
 }
 
+.conversations-card {
+  background: linear-gradient(180deg, rgba(255,255,255,0.94) 0%, rgba(248,250,252,0.9) 100%);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  min-height: 180px;
+  max-height: 280px;
+  margin-top: 14px;
+}
+
+.conversations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.conv-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.conv-item:hover {
+  border-color: var(--border-strong);
+  background: rgba(241, 245, 249, 0.7);
+}
+
+.conv-item.active {
+  border-color: rgba(29, 78, 216, 0.35);
+  background: linear-gradient(180deg, rgba(219, 234, 254, 0.35), rgba(248, 250, 252, 0.96));
+}
+
+.conv-item-btn {
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+  flex: 1;
+  overflow: hidden;
+}
+
+.conv-item-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink-900);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.conv-item-meta {
+  font-size: 0.68rem;
+  color: var(--ink-500);
+  margin-top: 2px;
+  display: block;
+}
+
 .view-btn:hover,
 .secondary-action:hover:not(:disabled) {
   background: rgba(59, 130, 246, 0.12);

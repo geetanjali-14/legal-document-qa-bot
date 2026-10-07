@@ -225,10 +225,9 @@ def test_document_ingestion_and_retrieval_end_to_end_with_dense(tmp_path: Path, 
         pdf_service=pdf_service,
         chunking_service=chunking_service,
         embedding_service=embedding_service,
-        vector_store=vector_store
+        vector_store=vector_store,
+        upload_dir=upload_dir
     )
-    doc_service.upload_dir = upload_dir
-    doc_service.metadata_file = upload_dir / "documents_meta.json"
 
     contract_bytes = Path("documents/synthetic_contract.pdf").read_bytes()
     meta = doc_service.process_document(contract_bytes, "synthetic_contract.pdf")

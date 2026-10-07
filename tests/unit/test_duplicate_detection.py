@@ -38,13 +38,9 @@ def isolated_doc_service(tmp_path: Path):
         pdf_service=pdf_service,
         chunking_service=chunking_service,
         embedding_service=embedding_service,
-        vector_store=vector_store
+        vector_store=vector_store,
+        upload_dir=upload_dir
     )
-    # Redirect upload directory
-    service.upload_dir = upload_dir
-    service.metadata_file = upload_dir / "documents_meta.json"
-    service.documents = {}
-    service._hash_to_id = {}
     return service
 
 
