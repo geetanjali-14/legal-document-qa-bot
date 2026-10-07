@@ -23,6 +23,8 @@ class BaseEmbeddingProvider(ABC):
 class MockEmbeddingProvider(BaseEmbeddingProvider):
     """Deterministic hash-based embedding for zero-dependency testing."""
     def __init__(self, dimension: int = 128):
+        self.provider_name = "mock"
+        self.model_name = "mock-hash"
         self.dimension = dimension
 
     def _hash_vector(self, text: str) -> np.ndarray:
@@ -52,6 +54,8 @@ class TFIDFEmbeddingProvider(BaseEmbeddingProvider):
     Provides real semantic token overlap and document weighting without external API keys.
     """
     def __init__(self, max_features: int = 1024):
+        self.provider_name = "tfidf"
+        self.model_name = "tfidf-scikit"
         self.max_features = max_features
         self.vectorizer = TfidfVectorizer(
             max_features=max_features,
@@ -100,6 +104,7 @@ class FastEmbedProvider(BaseEmbeddingProvider):
                 "fastembed is required for FastEmbedProvider. Install it with `pip install fastembed`."
             ) from exc
 
+        self.provider_name = "fastembed"
         self.model_name = model_name or self.DEFAULT_MODEL
         logger.info(f"Loading FastEmbed model: {self.model_name}")
         self._model = TextEmbedding(model_name=self.model_name)
@@ -119,8 +124,10 @@ class FastEmbedProvider(BaseEmbeddingProvider):
 class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
     """OpenAI API embedding provider (e.g. text-embedding-3-small)."""
     def __init__(self, api_key: str, model: str = "text-embedding-3-small", base_url: str = ""):
+        self.provider_name = "openai"
         self.api_key = api_key
         self.model = model
+        self.model_name = model
         self.base_url = (base_url or "https://api.openai.com/v1").rstrip("/") + "/embeddings"
         self.last_tokens: Optional[int] = None
 
@@ -149,11 +156,17 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
 
 class EmbeddingService:
     def __init__(self):
-        self.provider_name = settings.EMBEDDING_PROVIDER
-        self.model_name = settings.EMBEDDING_MODEL
         self.provider = self._resolve_provider()
         self.last_latency_ms: float = 0.0
         self.last_tokens: Optional[int] = None
+
+    @property
+    def provider_name(self) -> str:
+        return getattr(self.provider, "provider_name", settings.EMBEDDING_PROVIDER.lower())
+
+    @property
+    def model_name(self) -> str:
+        return getattr(self.provider, "model_name", settings.EMBEDDING_MODEL)
 
     def _resolve_provider(self) -> BaseEmbeddingProvider:
         provider_name = settings.EMBEDDING_PROVIDER.lower()

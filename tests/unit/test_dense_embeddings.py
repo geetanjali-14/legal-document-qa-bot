@@ -282,3 +282,188 @@ def test_api_chat_dimension_mismatch_http_400(monkeypatch, tmp_path: Path):
             app_state["embedding_service"].provider = original_provider
             client.delete(f"/api/documents/{doc_id}")
 
+
+def test_persisted_vector_rejection_on_dimension_incompatibility(tmp_path: Path):
+    """
+    Fix 1 Test: When persisted vectors on disk have a dimension that does not match
+    the saved compatibility metadata (e.g. corrupted file or manual edit),
+    VectorStore skips loading it instead of silently loading corrupted data.
+    """
+    import json
+    chunks = [
+        DocumentChunk(
+            chunk_id="c_corrupt",
+            document_id="doc_corrupt",
+            document_name="corrupt.pdf",
+            page_number=1,
+            section="Section 1",
+            text="Valid text passage."
+        )
+    ]
+    # Save 128-dim vectors
+    mock_128 = MockEmbeddingProvider(dimension=128)
+    vecs_128 = mock_128.embed_texts([c.text for c in chunks])
+
+    store = VectorStore(storage_dir=tmp_path)
+    store.add_document("doc_corrupt", chunks, vecs_128)
+
+    # Tamper with index metadata to declare 384 dimension
+    meta_path = tmp_path / "doc_corrupt_meta.json"
+    with open(meta_path, "w", encoding="utf-8") as mf:
+        json.dump({
+            "document_id": "doc_corrupt",
+            "embedding_provider": "fastembed",
+            "embedding_model": "BAAI/bge-small-en-v1.5",
+            "dimension": 384,
+            "chunk_count": 1
+        }, mf)
+
+    # Re-instantiate VectorStore; corrupted document must be skipped
+    reloaded_store = VectorStore(storage_dir=tmp_path)
+    assert not reloaded_store.has_document("doc_corrupt")
+    assert "doc_corrupt" not in reloaded_store.vectors_by_doc
+
+
+def test_duplicate_reuse_after_embedding_provider_model_change(tmp_path: Path):
+    """
+    Fix 2 Test: When a duplicate file is re-uploaded but the active embedding configuration
+    has changed (e.g. from mock/tfidf to fastembed), DocumentService rebuilds/re-indexes
+    the document under the new provider rather than returning stale vectors.
+    """
+    upload_dir = tmp_path / "uploads"
+    vector_dir = tmp_path / "vectors"
+    upload_dir.mkdir(parents=True)
+    vector_dir.mkdir(parents=True)
+
+    pdf_service = PDFService()
+    chunking_service = ChunkingService(chunk_size=500, chunk_overlap=100, min_chunk_size=50)
+
+    # Phase 1: Ingest document using MockEmbeddingProvider (128-dim)
+    emb_service1 = EmbeddingService()
+    emb_service1.provider = MockEmbeddingProvider(dimension=128)
+    vector_store = VectorStore(storage_dir=vector_dir)
+
+    doc_service = DocumentService(
+        pdf_service=pdf_service,
+        chunking_service=chunking_service,
+        embedding_service=emb_service1,
+        vector_store=vector_store
+    )
+    doc_service.upload_dir = upload_dir
+    doc_service.metadata_file = upload_dir / "documents_meta.json"
+
+    contract_bytes = Path("documents/synthetic_contract.pdf").read_bytes()
+    doc1 = doc_service.process_document(contract_bytes, "contract.pdf")
+
+    assert doc1.embedding_provider == "mock"
+    assert vector_store.vectors_by_doc[doc1.document_id].shape[1] == 128
+
+    # Phase 2: Switch embedding provider to FastEmbed (384-dim)
+    emb_service2 = EmbeddingService()
+    emb_service2.provider = FastEmbedProvider()
+    doc_service.embedding_service = emb_service2
+
+    # Process identical bytes under new provider; must detect config mismatch, rebuild, and not return stale 128-dim vectors
+    doc2 = doc_service.process_document(contract_bytes, "contract_second_upload.pdf")
+
+    assert doc2.embedding_provider == "fastembed"
+    assert doc2.embedding_model == "BAAI/bge-small-en-v1.5"
+    assert vector_store.has_document(doc2.document_id)
+    assert vector_store.vectors_by_doc[doc2.document_id].shape[1] == 384
+
+
+def test_dense_document_scoped_isolation(tmp_path: Path):
+    """
+    Fix 4 Test: Dense vectors from Document A never leak into Document B retrieval queries.
+    """
+    store = VectorStore(storage_dir=tmp_path)
+    fast_provider = FastEmbedProvider()
+    emb_service = EmbeddingService()
+    emb_service.provider = fast_provider
+
+    chunks_a = [
+        DocumentChunk(
+            chunk_id="chunk_a",
+            document_id="doc_alpha",
+            document_name="contract_alpha.pdf",
+            page_number=1,
+            section="Termination",
+            text="Party Alpha may cancel or terminate this agreement within 10 days."
+        )
+    ]
+    chunks_b = [
+        DocumentChunk(
+            chunk_id="chunk_b",
+            document_id="doc_beta",
+            document_name="contract_beta.pdf",
+            page_number=1,
+            section="Termination",
+            text="Party Beta termination requires 90 days prior written notice."
+        )
+    ]
+
+    store.add_document("doc_alpha", chunks_a, fast_provider.embed_texts([c.text for c in chunks_a]))
+    store.add_document("doc_beta", chunks_b, fast_provider.embed_texts([c.text for c in chunks_b]))
+
+    retrieval = RetrievalService(emb_service, store)
+
+    # Scoped search in doc_alpha must never return chunk_b
+    results_alpha = retrieval.retrieve("doc_alpha", "cancel agreement notice period", top_k=5, threshold=0.0)
+    assert len(results_alpha) == 1
+    assert results_alpha[0][0].document_id == "doc_alpha"
+    assert results_alpha[0][0].chunk_id == "chunk_a"
+
+    # Scoped search in doc_beta must never return chunk_a
+    results_beta = retrieval.retrieve("doc_beta", "cancel agreement notice period", top_k=5, threshold=0.0)
+    assert len(results_beta) == 1
+    assert results_beta[0][0].document_id == "doc_beta"
+    assert results_beta[0][0].chunk_id == "chunk_b"
+
+
+def test_stale_persisted_vector_handling_on_search(tmp_path: Path):
+    """
+    Fix 4 Test: When VectorStore has a document indexed with 128-dim vectors,
+    and a query comes in with 384-dim dense vectors, search raises EmbeddingDimensionMismatchError.
+    """
+    store = VectorStore(storage_dir=tmp_path)
+    mock_provider = MockEmbeddingProvider(dimension=128)
+    fast_provider = FastEmbedProvider()
+
+    chunks = [
+        DocumentChunk(
+            chunk_id="c_stale",
+            document_id="doc_stale",
+            document_name="stale.pdf",
+            page_number=1,
+            section="General",
+            text="Stale document text indexed under older provider."
+        )
+    ]
+    vecs_stale = mock_provider.embed_texts([c.text for c in chunks])
+    store.add_document("doc_stale", chunks, vecs_stale)
+
+    # Query with FastEmbed dense vector (384-dim)
+    q_vec_dense = fast_provider.embed_query("any search query")
+
+    with pytest.raises(EmbeddingDimensionMismatchError) as exc_info:
+        store.search("doc_stale", q_vec_dense)
+
+    assert exc_info.value.query_dim == 384
+    assert exc_info.value.store_dim == 128
+
+
+def test_fastembed_cold_start_latency_measurement():
+    """
+    Fix 5 Test: Deterministic cold-start initialization and inference measurement.
+    Ensures newly instantiated provider completes query embedding within bounded time.
+    """
+    t_start = time.perf_counter()
+    cold_provider = FastEmbedProvider(model_name="BAAI/bge-small-en-v1.5")
+    q_vec = cold_provider.embed_query("Initial cold query")
+    elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+
+    assert isinstance(q_vec, np.ndarray)
+    assert q_vec.shape == (1, 384)
+    # Cold initialization (when model is cached on disk) should complete within 3000ms
+    assert elapsed_ms < 3000.0, f"Cold start latency {elapsed_ms:.2f}ms exceeded limit"
+

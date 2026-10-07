@@ -129,39 +129,73 @@ class DocumentService:
                     f"but vector data is unexpectedly missing or corrupted."
                 )
 
-            t_dup_end = time.perf_counter()
-            total_latency_ms = max(0.0, (t_dup_end - t_process_start) * 1000.0)
+            # Validate that existing document's indexed vectors match current embedding configuration
+            current_provider = self.embedding_service.provider_name.lower()
+            current_model = self.embedding_service.model_name
+            index_meta = self.vector_store.get_index_metadata(existing_doc.document_id)
 
-            # Record duplicate detection telemetry (skipped work is NOT reported as completed)
-            dup_telemetry = DocumentProcessingTelemetry(
-                event="document_duplicate_detected",
-                document_id=existing_doc.document_id,
-                filename=self.sanitize_filename(original_filename),
-                file_size_bytes=len(file_bytes),
-                page_count=existing_doc.page_count,
-                chunk_count=existing_doc.chunk_count,
-                extraction_latency_ms=0.0,
-                chunking_latency_ms=0.0,
-                embedding_latency_ms=0.0,
-                indexing_latency_ms=0.0,
-                total_latency_ms=round(total_latency_ms, 2),
-                embedding_provider=settings.EMBEDDING_PROVIDER,
-                embedding_model=settings.EMBEDDING_MODEL,
-                embedding_tokens=None,
-                estimated_embedding_cost=None,
-                status="duplicate_reused",
-                is_duplicate=True,
-                content_hash=content_hash
+            existing_provider = (
+                (index_meta.get("embedding_provider") if index_meta else None)
+                or existing_doc.embedding_provider
+                or ""
+            ).lower()
+            existing_model = (
+                (index_meta.get("embedding_model") if index_meta else None)
+                or existing_doc.embedding_model
+                or ""
             )
-            record_document_telemetry(dup_telemetry)
 
-            logger.info(
-                f"Duplicate document detected (hash={content_hash[:12]}..., file='{original_filename}'). "
-                f"Reusing existing document {existing_doc.document_id} in {total_latency_ms:.2f}ms."
-            )
-            return existing_doc
+            is_compatible = True
+            if existing_provider and existing_provider != current_provider:
+                is_compatible = False
+            elif existing_model and existing_model != current_model:
+                is_compatible = False
 
-        # Document does not exist: proceed with standard ingestion
+            if is_compatible:
+                t_dup_end = time.perf_counter()
+                total_latency_ms = max(0.0, (t_dup_end - t_process_start) * 1000.0)
+
+                # Record duplicate detection telemetry (skipped work is NOT reported as completed)
+                dup_telemetry = DocumentProcessingTelemetry(
+                    event="document_duplicate_detected",
+                    document_id=existing_doc.document_id,
+                    filename=self.sanitize_filename(original_filename),
+                    file_size_bytes=len(file_bytes),
+                    page_count=existing_doc.page_count,
+                    chunk_count=existing_doc.chunk_count,
+                    extraction_latency_ms=0.0,
+                    chunking_latency_ms=0.0,
+                    embedding_latency_ms=0.0,
+                    indexing_latency_ms=0.0,
+                    total_latency_ms=round(total_latency_ms, 2),
+                    embedding_provider=current_provider,
+                    embedding_model=current_model,
+                    embedding_tokens=None,
+                    estimated_embedding_cost=None,
+                    status="duplicate_reused",
+                    is_duplicate=True,
+                    content_hash=content_hash
+                )
+                record_document_telemetry(dup_telemetry)
+
+                logger.info(
+                    f"Duplicate document detected (hash={content_hash[:12]}..., file='{original_filename}'). "
+                    f"Reusing existing document {existing_doc.document_id} in {total_latency_ms:.2f}ms."
+                )
+                return existing_doc
+            else:
+                logger.info(
+                    f"Duplicate document found ({existing_doc.document_id}), but embedding configuration changed "
+                    f"from provider='{existing_provider}', model='{existing_model}' to "
+                    f"provider='{current_provider}', model='{current_model}'. "
+                    f"Rebuilding index to prevent stale or incompatible vectors."
+                )
+                self.vector_store.delete_document(existing_doc.document_id)
+                del self.documents[existing_doc.document_id]
+                if content_hash in self._hash_to_id:
+                    del self._hash_to_id[content_hash]
+
+        # Document does not exist or requires re-indexing: proceed with standard ingestion
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
         safe_name = f"{doc_id}_{self.sanitize_filename(original_filename)}"
         saved_path = self.upload_dir / safe_name
@@ -200,7 +234,17 @@ class DocumentService:
 
             # 4. Store in vector database
             t_index_start = time.perf_counter()
-            self.vector_store.add_document(doc_id, chunks, embeddings)
+            actual_provider = self.embedding_service.provider_name
+            actual_model = self.embedding_service.model_name
+            actual_dimension = int(embeddings.shape[1]) if embeddings.ndim > 1 else 0
+
+            self.vector_store.add_document(
+                doc_id,
+                chunks,
+                embeddings,
+                embedding_provider=actual_provider,
+                embedding_model=actual_model
+            )
             index_latency_ms = max(0.0, (time.perf_counter() - t_index_start) * 1000.0)
 
             total_latency_ms = max(0.0, (time.perf_counter() - t_process_start) * 1000.0)
@@ -213,8 +257,9 @@ class DocumentService:
                 page_count=len(pages),
                 chunk_count=len(chunks),
                 content_hash=content_hash,
-                embedding_provider=settings.EMBEDDING_PROVIDER,
-                embedding_model=getattr(self.embedding_service.provider, "model_name", settings.EMBEDDING_MODEL),
+                embedding_provider=actual_provider,
+                embedding_model=actual_model,
+                embedding_dimension=actual_dimension,
                 status="processed"
             )
             self.documents[doc_id] = meta

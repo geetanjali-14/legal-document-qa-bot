@@ -27,25 +27,63 @@ class VectorStore:
     def _get_doc_chunks_path(self, document_id: str) -> Path:
         return self.storage_dir / f"{document_id}_chunks.json"
 
+    def _get_doc_meta_path(self, document_id: str) -> Path:
+        return self.storage_dir / f"{document_id}_meta.json"
+
     def _load_all_persisted(self) -> None:
         """Scan vector store directory and restore saved documents on startup."""
         for chunks_path in self.storage_dir.glob("*_chunks.json"):
             doc_id = chunks_path.stem.replace("_chunks", "")
             vector_path = self._get_doc_vector_path(doc_id)
+            meta_path = self._get_doc_meta_path(doc_id)
             if vector_path.exists():
                 try:
                     with open(chunks_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
                         chunks = [DocumentChunk(**item) for item in data]
                     vectors = np.load(str(vector_path))
+
+                    # Validate vector compatibility metadata if present
+                    if meta_path.exists():
+                        try:
+                            with open(meta_path, "r", encoding="utf-8") as mf:
+                                index_meta = json.load(mf)
+                            meta_dim = index_meta.get("dimension")
+                            if meta_dim is not None and vectors.shape[1] != meta_dim:
+                                logger.error(
+                                    f"Persisted vector file corrupt for doc {doc_id}: "
+                                    f"shape dimension {vectors.shape[1]} != meta dimension {meta_dim}. Skipping load."
+                                )
+                                continue
+                        except Exception as m_err:
+                            logger.warning(f"Error parsing index metadata for {doc_id}: {m_err}")
+
                     self.chunks_by_doc[doc_id] = chunks
                     self.vectors_by_doc[doc_id] = vectors
                     logger.info(f"Loaded persisted vector store for doc {doc_id} ({len(chunks)} chunks)")
                 except Exception as e:
                     logger.error(f"Error loading persisted vectors for {doc_id}: {str(e)}")
 
-    def add_document(self, document_id: str, chunks: List[DocumentChunk], embeddings: np.ndarray) -> None:
-        """Store chunk vectors and serialize to disk."""
+    def get_index_metadata(self, document_id: str) -> Optional[Dict]:
+        """Load persisted index metadata (provider, model, dimension) for document."""
+        meta_path = self._get_doc_meta_path(document_id)
+        if meta_path.exists():
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"Error reading index metadata for {document_id}: {e}")
+        return None
+
+    def add_document(
+        self,
+        document_id: str,
+        chunks: List[DocumentChunk],
+        embeddings: np.ndarray,
+        embedding_provider: Optional[str] = None,
+        embedding_model: Optional[str] = None
+    ) -> None:
+        """Store chunk vectors, compatibility metadata, and serialize to disk."""
         if len(chunks) != len(embeddings):
             raise ValueError(f"Mismatch: {len(chunks)} chunks vs {len(embeddings)} vectors.")
 
@@ -57,12 +95,25 @@ class VectorStore:
         self.chunks_by_doc[document_id] = chunks
         self.vectors_by_doc[document_id] = normalized_vectors
 
-        # Persist to disk
+        # Persist vectors and chunks to disk
         np.save(str(self._get_doc_vector_path(document_id)), normalized_vectors)
         with open(self._get_doc_chunks_path(document_id), "w", encoding="utf-8") as f:
             json.dump([c.model_dump() for c in chunks], f, indent=2)
 
-        logger.info(f"Stored {len(chunks)} chunks and vectors for document {document_id}")
+        # Persist index compatibility metadata
+        prov = (embedding_provider or settings.EMBEDDING_PROVIDER).lower()
+        mod = embedding_model or settings.EMBEDDING_MODEL
+        index_meta = {
+            "document_id": document_id,
+            "embedding_provider": prov,
+            "embedding_model": mod,
+            "dimension": int(normalized_vectors.shape[1]),
+            "chunk_count": len(chunks)
+        }
+        with open(self._get_doc_meta_path(document_id), "w", encoding="utf-8") as f:
+            json.dump(index_meta, f, indent=2)
+
+        logger.info(f"Stored {len(chunks)} chunks and vectors for document {document_id} [provider={prov}, model={mod}, dim={normalized_vectors.shape[1]}]")
 
     def delete_document(self, document_id: str) -> bool:
         """Remove document from memory and disk."""
@@ -82,6 +133,11 @@ class VectorStore:
         c_path = self._get_doc_chunks_path(document_id)
         if c_path.exists():
             c_path.unlink()
+            removed = True
+
+        m_path = self._get_doc_meta_path(document_id)
+        if m_path.exists():
+            m_path.unlink()
             removed = True
 
         return removed
