@@ -175,10 +175,15 @@ Phase 9: Production Readiness & Observability
 * **Acceptance Criteria:** Synonym retrieval passes test suite on local CPU with $< 50$ms query embedding latency (~6ms observed); persisted vectors remain consistent across restarts.
 
 #### Task OPT-018: RAG Evaluation Benchmark Suite
-* **Priority:** **P1** | **Status:** **NEXT (PLANNED; NOT IMPLEMENTED)**
+* **Priority:** **P1** | **Status:** **COMPLETED**
 * **Dependencies:** MVP-001, OPT-008, OPT-017 (all complete)
 * **Objective:** Establish repeatable offline evaluation for the existing implementation, covering grounded answer correctness, refusal correctness, citation accuracy, retrieval quality, token/cost measurement, and regression detection.
-* **Acceptance Criteria:** Automated evaluation records reproducible outcomes, asserts grounded answers/citations for supported cases and refusals for unanswerable cases, and reports relevant telemetry. It measures the current system and does not implement runtime features or other roadmap tasks.
+* **Implementation:**
+  * Implemented structured benchmark dataset schema and canonical evaluation cases in `tests/evaluation/benchmark_dataset.py` covering Direct Fact, Multi-Clause Context, Unanswerable, Adversarial/Out-of-Scope, Citation Integrity, and Retrieval Quality.
+  * Implemented deterministic evaluation harness and metrics aggregator in `tests/evaluation/eval_harness.py` distinguishing actual vs estimated tokens, latencies, and evaluating Answer, Retrieval, Citation, Refusal, and Grounding correctness independently.
+  * Created standalone CLI runner `tests/evaluation/run_benchmark.py` generating human-readable and machine-readable JSON reports.
+  * Created automated pytest suite in `tests/evaluation/test_rag_eval.py` running in isolated temporary stores, establishing reproducible regression protection.
+* **Acceptance Criteria:** Automated evaluation records reproducible outcomes, asserts grounded answers/citations for supported cases and refusals for unanswerable cases, exposes weaknesses (such as lexical retrieval overlaps on unanswerable queries), and reports relevant telemetry. It measures the current system without altering production runtime logic.
 
 ---
 
@@ -419,7 +424,7 @@ Model Routing (OPT-019) & Provider Fallback (OPT-020)
 | **OPT-016** | Prompt Injection Defense | P1 | Phase 6 | PLANNED | `app/services/llm_service.py` |
 | **OPT-017** | Token & Cost Telemetry Logging | P1 | Phase 9 | COMPLETED | `app/core/telemetry.py` |
 
-| **OPT-018** | RAG Evaluation Benchmark Suite | P1 | Phase 2 | NEXT (PLANNED) | `tests/evaluation/test_rag_eval.py` |
+| **OPT-018** | RAG Evaluation Benchmark Suite | P1 | Phase 2 | COMPLETED | `tests/evaluation/test_rag_eval.py` |
 | **OPT-019** | Model Routing Strategy | P2 | Phase 7 | OPEN DECISION | `app/services/llm_service.py` |
 | **OPT-020** | Bounded Provider Fallback | P2 | Phase 7 | OPEN DECISION | `app/services/llm_service.py` |
 | **OPT-021** | Hard Resource Limits Configuration | P1 | Phase 6 | COMPLETED | `app/core/config.py` |
