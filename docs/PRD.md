@@ -124,7 +124,7 @@ The **MVP-001** milestone is **COMPLETE** and serves as the stable baseline for 
 3. **No OCR Ingestion:** Scanned PDFs without sufficient extractable text are rejected with `ScannedPDFError`.
 4. **File-Based Metadata Store:** `documents_meta.json` lacks ACID transactions and concurrent write locks.
 5. **No Authentication / RBAC:** API endpoints and document files are not protected by authentication.
-6. **Prompt Injection Boundaries:** Document passages are not yet encapsulated within strict XML isolation tags (`OPT-016`).
+6. **Prompt Injection Boundaries:** Document passages are encapsulated within strict machine-readable XML isolation tags (`<context_document_data>`) with hardened instruction hierarchy (`OPT-016`).
 
 ---
 
@@ -436,7 +436,7 @@ A standardized, repeatable offline evaluation benchmark suite is implemented in 
 | **FR-EFF-009** | Embedding Cache | Embedding Cache Layer | `OPT-009` | **PLANNED** | Re-index; verify unchanged chunk vectors are reused. |
 | **FR-EFF-010** | Processing Cache | Ingestion Coordinator | `OPT-010` | **PLANNED** | Re-process; verify extraction is reused. |
 | **FR-EFF-011** | Exact Q&A Cache | Caching Service | `OPT-012` | **PLANNED** | Repeat a question; verify a cache hit with no embedding/LLM use. |
-| **FR-SEC-001** | Prompt Injection Defense | Prompt Builder / LLM Guard | `OPT-016` | **PLANNED** | Test adversarial document instructions. |
+| **FR-SEC-001** | Prompt Injection Defense | Prompt Builder / LLM Guard | `OPT-016` | **COMPLETED** | Test adversarial document instructions, instruction hierarchy, and XML delimiters. |
 | **FR-OBS-001** | Token & Cost Observability | Metrics Logger | `OPT-017` | **COMPLETED** | Inspect response telemetry and structured logs. |
 | **Hard Resource Limits** | Resource Limit Enforcer | `OPT-021` | **COMPLETED** | Verify configured upload, page, chunk, query, context, and token limits and rejection cleanup. |
 | **FR-EVAL-001** | Systematic RAG Evaluation | Evaluation Suite | `OPT-018` | **COMPLETED** | Run repeatable grounded-answer, refusal, citation, retrieval, token, cost, and latency checks (16/16 passed). |

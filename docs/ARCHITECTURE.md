@@ -345,9 +345,9 @@ The following catalog distinguishes current components from planned target respo
 17. **Adaptive Top-K and Context Optimizer — PLANNED (OPT-004 / OPT-005):**
     * Prunes overlapping text across adjacent retrieved chunks.
     * Enforces dynamic/adaptive Top-K, passing only the minimal sufficient chunks to answer the prompt.
-18. **Prompt Injection Guard — PLANNED (OPT-016):**
-    * Encapsulates retrieved document chunks within strict structural XML tags (`<context_document_data>`).
-    * Appends explicit boundary directives preventing document text from being executed as prompt commands.
+18. **Prompt Injection Guard — COMPLETED (OPT-016):**
+    * Encapsulates retrieved document chunks within strict structural XML tags (`<context_document_data>...<context_document_data>`).
+    * Appends explicit boundary directives and instruction hierarchy in `SYSTEM_PROMPT` preventing document text from being executed as prompt commands.
 19. **Model Router — OPEN DECISION / PLANNED (OPT-019):**
     * Directs queries based on task complexity to the most cost-effective model (Fast/Local for simple extractions, Advanced for multi-clause reasoning).
 20. **LLM Provider — CURRENT / LIMITED:**
