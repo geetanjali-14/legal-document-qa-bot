@@ -10,6 +10,13 @@ from app.services.citation_service import CitationService
 from app.services.document_service import DocumentService
 from app.core.config import settings
 from app.core.logging import logger
+from app.core.errors import (
+    ResourceLimitError,
+    QueryLimitExceededError,
+    ContextLimitExceededError,
+    TokenBudgetExceededError,
+    EmbeddingDimensionMismatchError
+)
 from app.core.telemetry import (
     ChatTelemetry,
     record_chat_telemetry,
@@ -43,12 +50,52 @@ async def ask_question(
 
     t_request_start = time.perf_counter()
 
+    # 2. Hard limit: validate query length before expensive retrieval or embedding
+    if len(request.question) > settings.MAX_QUERY_CHARS:
+        total_latency_ms = max(0.0, (time.perf_counter() - t_request_start) * 1000.0)
+        telemetry = ChatTelemetry(
+            request_id=request_id,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            document_id=request.document_id,
+            status="rejected",
+            error_category="query_too_large",
+            total_latency_ms=round(total_latency_ms, 2),
+            token_usage_type="unknown"
+        )
+        record_chat_telemetry(telemetry)
+        logger.warning(f"[{request_id}] Query rejected: length ({len(request.question)}) > {settings.MAX_QUERY_CHARS}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"User question length ({len(request.question)} characters) exceeds maximum allowed limit of {settings.MAX_QUERY_CHARS} characters. [query_too_large]",
+            headers={"X-Error-Category": "query_too_large"}
+        )
+
+    # 3. Hard limit: validate top_k parameter ceiling
+    if request.top_k is not None and request.top_k > settings.MAX_TOP_K:
+        total_latency_ms = max(0.0, (time.perf_counter() - t_request_start) * 1000.0)
+        telemetry = ChatTelemetry(
+            request_id=request_id,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            document_id=request.document_id,
+            status="rejected",
+            error_category="context_limit_exceeded",
+            total_latency_ms=round(total_latency_ms, 2),
+            token_usage_type="unknown"
+        )
+        record_chat_telemetry(telemetry)
+        logger.warning(f"[{request_id}] Request rejected: top_k ({request.top_k}) > {settings.MAX_TOP_K}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Requested top_k ({request.top_k}) exceeds maximum allowed limit of {settings.MAX_TOP_K}. [context_limit_exceeded]",
+            headers={"X-Error-Category": "context_limit_exceeded"}
+        )
+
     doc_service: DocumentService = services["document"]
     retrieval_service: RetrievalService = services["retrieval"]
     llm_service: LLMService = services["llm"]
     citation_service: CitationService = services["citation"]
 
-    # 2. Verify document exists
+    # 4. Verify document exists
     doc = doc_service.get_document(request.document_id)
     if not doc:
         logger.warning(f"[{request_id}] Document with ID {request.document_id} not found.")
@@ -57,7 +104,7 @@ async def ask_question(
             detail=f"Document with ID {request.document_id} was not found."
         )
 
-    # 3. Retrieve relevant chunks
+    # 5. Retrieve relevant chunks
     try:
         retrieved_results = retrieval_service.retrieve(
             document_id=request.document_id,
@@ -66,6 +113,13 @@ async def ask_question(
         )
         retrieval_latency_ms = getattr(retrieval_service, "last_retrieval_latency_ms", 0.0)
         embedding_latency_ms = getattr(retrieval_service, "last_embedding_latency_ms", 0.0)
+    except EmbeddingDimensionMismatchError as dim_err:
+        logger.error(f"[{request_id}] Embedding dimension mismatch: {str(dim_err)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(dim_err),
+            headers={"X-Error-Category": "embedding_dimension_mismatch"}
+        )
     except Exception as e:
         logger.error(f"[{request_id}] Retrieval error: {str(e)}")
         raise HTTPException(
@@ -112,22 +166,67 @@ async def ask_question(
             ).model_dump()
         )
 
-    # 4. Create verifiable citations
+    # 6. Hard limit: validate retrieved context character budget
+    total_context_chars = sum(len(chunk.text) for chunk, _ in retrieved_results)
+    if total_context_chars > settings.MAX_CONTEXT_CHARS:
+        total_latency_ms = max(0.0, (time.perf_counter() - t_request_start) * 1000.0)
+        telemetry = ChatTelemetry(
+            request_id=request_id,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            document_id=request.document_id,
+            status="rejected",
+            error_category="context_limit_exceeded",
+            total_latency_ms=round(total_latency_ms, 2),
+            retrieval_latency_ms=round(retrieval_latency_ms, 2),
+            embedding_latency_ms=round(embedding_latency_ms, 2),
+            retrieved_chunks_count=len(retrieved_results),
+            token_usage_type="unknown"
+        )
+        record_chat_telemetry(telemetry)
+        logger.warning(f"[{request_id}] Context rejected: total context chars ({total_context_chars}) > {settings.MAX_CONTEXT_CHARS}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Retrieved context size ({total_context_chars} characters) exceeds maximum allowed limit of {settings.MAX_CONTEXT_CHARS} characters. [context_limit_exceeded]",
+            headers={"X-Error-Category": "context_limit_exceeded"}
+        )
+
+    # 7. Create verifiable citations
     citations = citation_service.create_citations(retrieved_results)
 
-    # 5. Format context for LLM
+    # 8. Format context for LLM
     context_chunks = [
         f"[Section: {chunk.section} | Page: {chunk.page_number}]\n{chunk.text}"
         for chunk, _ in retrieved_results
     ]
 
-    # 6. Generate grounded response
+    # 9. Generate grounded response with bounded prompt token budget
     t_llm_call_start = time.perf_counter()
     try:
         llm_result = llm_service.generate_answer(
             question=request.question,
             context_chunks=context_chunks,
             history=request.history
+        )
+    except TokenBudgetExceededError as tbe:
+        total_latency_ms = max(0.0, (time.perf_counter() - t_request_start) * 1000.0)
+        telemetry = ChatTelemetry(
+            request_id=request_id,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            document_id=request.document_id,
+            status="rejected",
+            error_category=tbe.error_category,
+            total_latency_ms=round(total_latency_ms, 2),
+            retrieval_latency_ms=round(retrieval_latency_ms, 2),
+            embedding_latency_ms=round(embedding_latency_ms, 2),
+            retrieved_chunks_count=len(retrieved_results),
+            token_usage_type="unknown"
+        )
+        record_chat_telemetry(telemetry)
+        logger.warning(f"[{request_id}] Token budget rejected: {tbe.message}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{tbe.message} [{tbe.error_category}]",
+            headers={"X-Error-Category": tbe.error_category}
         )
     except Exception as e:
         logger.error(f"[{request_id}] LLM generation failure: {str(e)}")

@@ -27,7 +27,7 @@ app_state = {}
 async def lifespan(app: FastAPI):
     # Startup: initialize services
     logger.info("Initializing Legal Document QA Assistant services...")
-    pdf_service = PDFService()
+    pdf_service = PDFService(max_pages=settings.MAX_DOCUMENT_PAGES)
     chunking_service = ChunkingService(
         chunk_size=settings.CHUNK_SIZE,
         chunk_overlap=settings.CHUNK_OVERLAP,
@@ -38,6 +38,7 @@ async def lifespan(app: FastAPI):
     retrieval_service = RetrievalService(embedding_service, vector_store)
     llm_service = LLMService()
     citation_service = CitationService()
+
     document_service = DocumentService(
         pdf_service=pdf_service,
         chunking_service=chunking_service,
@@ -45,7 +46,15 @@ async def lifespan(app: FastAPI):
         vector_store=vector_store
     )
 
+    # Sync vocabulary provider with any pre-loaded vector store chunks across restarts
+    if hasattr(embedding_service.provider, "fit_corpus") and not getattr(embedding_service.provider, "is_fitted", False):
+        for doc_chunks in vector_store.chunks_by_doc.values():
+            if doc_chunks:
+                embedding_service.provider.fit_corpus([c.text for c in doc_chunks])
+
     app_state["pdf_service"] = pdf_service
+
+
     app_state["chunking_service"] = chunking_service
     app_state["embedding_service"] = embedding_service
     app_state["vector_store"] = vector_store

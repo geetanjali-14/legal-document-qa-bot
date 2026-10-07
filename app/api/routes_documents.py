@@ -4,6 +4,8 @@ from app.models.response import ApiResponse
 from app.models.document import DocumentMetadata
 from app.services.document_service import DocumentService
 from app.services.pdf_service import ScannedPDFError, PDFExtractionError
+from app.core.config import settings
+from app.core.errors import ResourceLimitError
 from app.core.logging import logger
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
@@ -25,6 +27,15 @@ async def upload_document(
             detail="Only PDF documents are accepted."
         )
 
+    # Early rejection if content length header indicates oversized file
+    max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
+    if file.size is not None and file.size > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File size ({file.size} bytes) exceeds maximum allowed limit of {settings.MAX_FILE_SIZE_MB}MB. [file_too_large]",
+            headers={"X-Error-Category": "file_too_large"}
+        )
+
     try:
         content = await file.read()
         metadata = doc_service.process_document(content, file.filename)
@@ -32,6 +43,13 @@ async def upload_document(
             success=True,
             message="Document uploaded and indexed successfully.",
             data=metadata.model_dump(mode="json")
+        )
+    except ResourceLimitError as rle:
+        logger.warning(f"Resource limit exceeded for {file.filename}: [{rle.error_category}] {rle.message}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{rle.message} [{rle.error_category}]",
+            headers={"X-Error-Category": rle.error_category}
         )
     except ScannedPDFError as se:
         logger.warning(f"Scanned PDF uploaded: {file.filename} - {str(se)}")

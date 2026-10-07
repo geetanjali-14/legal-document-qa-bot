@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: Path = Path("data/uploads")
     VECTOR_STORE_DIR: Path = Path("data/vector_store")
     MAX_FILE_SIZE_MB: int = 25
+    MAX_DOCUMENT_PAGES: int = 500
     MAX_CHUNKS_PER_DOC: int = 5000
 
     # Chunking
@@ -27,9 +28,16 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 100
     MIN_CHUNK_SIZE: int = 50
 
-    # Retrieval
+    # Retrieval & Context Limits
     TOP_K: int = 4
+    MAX_TOP_K: int = 10
     SIMILARITY_THRESHOLD: float = 0.1
+    MAX_CONTEXT_CHARS: int = 8000
+
+    # Chat & Token Limits
+    MAX_QUERY_CHARS: int = 2000
+    MAX_PROMPT_TOKENS: int = 4096
+    MAX_OUTPUT_TOKENS: int = 1024
 
     # LLM Provider
     LLM_PROVIDER: Literal["mock", "openai", "anthropic", "ollama", "custom_http"] = "mock"
@@ -40,7 +48,7 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int = 1024
 
     # Embedding Provider
-    EMBEDDING_PROVIDER: Literal["mock", "tfidf", "openai", "ollama"] = "tfidf"
+    EMBEDDING_PROVIDER: Literal["mock", "tfidf", "fastembed", "openai", "ollama"] = "tfidf"
     EMBEDDING_API_KEY: str = ""
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_BASE_URL: str = ""

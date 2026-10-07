@@ -31,9 +31,16 @@ class RetrievalService:
 
         logger.info(f"Retrieving for doc={document_id}, query='{query[:50]}...', top_k={k}")
 
+        # If vocabulary-based embedding provider (e.g. TF-IDF) is not fitted, fit from indexed chunks
+        if hasattr(self.embedding_service.provider, "fit_corpus") and not getattr(self.embedding_service.provider, "is_fitted", False):
+            doc_chunks = self.vector_store.chunks_by_doc.get(document_id, [])
+            if doc_chunks:
+                self.embedding_service.provider.fit_corpus([c.text for c in doc_chunks])
+
         t_embed_start = time.perf_counter()
         query_vector = self.embedding_service.embed_query(query)
         self.last_embedding_latency_ms = max(0.0, (time.perf_counter() - t_embed_start) * 1000.0)
+
 
         results = self.vector_store.search(
             document_id=document_id,

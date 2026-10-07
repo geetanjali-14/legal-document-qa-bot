@@ -1,9 +1,11 @@
 import re
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import fitz  # PyMuPDF
 from app.models.document import PageContent
+from app.core.config import settings
 from app.core.logging import logger
+from app.core.errors import PageLimitExceededError
 
 
 class PDFExtractionError(Exception):
@@ -17,8 +19,9 @@ class ScannedPDFError(PDFExtractionError):
 
 
 class PDFService:
-    def __init__(self, min_char_threshold_per_page: int = 20):
+    def __init__(self, min_char_threshold_per_page: int = 20, max_pages: Optional[int] = None):
         self.min_char_threshold_per_page = min_char_threshold_per_page
+        self.max_pages = max_pages
 
     def clean_text(self, text: str) -> str:
         """Normalize whitespace, clean ligatures, and remove control characters."""
@@ -50,6 +53,12 @@ class PDFService:
         try:
             if doc.page_count == 0:
                 raise PDFExtractionError("PDF contains zero pages.")
+
+            page_limit = self.max_pages if self.max_pages is not None else settings.MAX_DOCUMENT_PAGES
+            if doc.page_count > page_limit:
+                raise PageLimitExceededError(
+                    f"Document page count ({doc.page_count}) exceeds maximum allowed limit of {page_limit} pages."
+                )
 
             pages_content: List[PageContent] = []
             total_chars = 0

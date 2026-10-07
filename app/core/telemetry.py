@@ -181,7 +181,10 @@ class DocumentProcessingTelemetry(BaseModel):
     embedding_tokens: Optional[int] = None
     estimated_embedding_cost: Optional[float] = None
     status: str = "success"
+    is_duplicate: bool = Field(default=False)
+    content_hash: Optional[str] = None
     error_category: Optional[str] = None
+
 
 
 class TelemetryCollector:

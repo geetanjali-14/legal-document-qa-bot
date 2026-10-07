@@ -5,6 +5,7 @@ import numpy as np
 from app.models.document import DocumentChunk
 from app.core.config import settings
 from app.core.logging import logger
+from app.core.errors import EmbeddingDimensionMismatchError
 
 
 class VectorStore:
@@ -85,7 +86,17 @@ class VectorStore:
 
         return removed
 
+    def has_document(self, document_id: str) -> bool:
+        """Check if document has both indexed chunks and vectors in memory."""
+        return (
+            document_id in self.chunks_by_doc
+            and document_id in self.vectors_by_doc
+            and len(self.chunks_by_doc[document_id]) > 0
+            and len(self.vectors_by_doc[document_id]) > 0
+        )
+
     def search(
+
         self,
         document_id: str,
         query_vector: np.ndarray,
@@ -106,12 +117,19 @@ class VectorStore:
         if len(chunks) == 0 or len(doc_vectors) == 0:
             return []
 
-        # Ensure query vector dimension matches
+        # Ensure query vector dimension matches stored document vectors
         if query_vector.shape[1] != doc_vectors.shape[1]:
-            logger.warning(
-                f"Dimension mismatch between query ({query_vector.shape[1]}) and store ({doc_vectors.shape[1]})"
+            err_msg = (
+                f"Dimension mismatch for document '{document_id}': "
+                f"query has dimension {query_vector.shape[1]}, but indexed store has dimension {doc_vectors.shape[1]}. "
+                f"Ensure the same embedding model is configured as when the document was indexed."
             )
-            return []
+            logger.error(err_msg)
+            raise EmbeddingDimensionMismatchError(
+                message=err_msg,
+                query_dim=query_vector.shape[1],
+                store_dim=doc_vectors.shape[1]
+            )
 
         q_norm = np.linalg.norm(query_vector)
         if q_norm == 0:

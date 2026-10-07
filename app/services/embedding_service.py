@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
+import time
 import numpy as np
 import httpx
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -83,7 +84,36 @@ class TFIDFEmbeddingProvider(BaseEmbeddingProvider):
         return sparse_vec.toarray().astype(np.float32)
 
 
-import time
+class FastEmbedProvider(BaseEmbeddingProvider):
+    """
+    Local dense embedding provider using FastEmbed (ONNX Runtime).
+    Default model: BAAI/bge-small-en-v1.5 (384-dimensional dense vectors).
+    Provides high-speed CPU inference and semantic synonym matching.
+    """
+    DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
+
+    def __init__(self, model_name: Optional[str] = None):
+        try:
+            from fastembed import TextEmbedding
+        except ImportError as exc:
+            raise ImportError(
+                "fastembed is required for FastEmbedProvider. Install it with `pip install fastembed`."
+            ) from exc
+
+        self.model_name = model_name or self.DEFAULT_MODEL
+        logger.info(f"Loading FastEmbed model: {self.model_name}")
+        self._model = TextEmbedding(model_name=self.model_name)
+        self.last_tokens: Optional[int] = None
+
+    def embed_texts(self, texts: List[str]) -> np.ndarray:
+        if not texts:
+            return np.empty((0, 384), dtype=np.float32)
+        embeddings = list(self._model.embed(texts))
+        return np.array(embeddings, dtype=np.float32)
+
+    def embed_query(self, query: str) -> np.ndarray:
+        embeddings = list(self._model.embed([query]))
+        return np.array(embeddings, dtype=np.float32)
 
 
 class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
@@ -129,7 +159,10 @@ class EmbeddingService:
         provider_name = settings.EMBEDDING_PROVIDER.lower()
         logger.info(f"Initializing embedding provider: {provider_name}")
 
-        if provider_name == "openai":
+        if provider_name == "fastembed":
+            model = settings.EMBEDDING_MODEL if settings.EMBEDDING_MODEL and settings.EMBEDDING_MODEL != "text-embedding-3-small" else FastEmbedProvider.DEFAULT_MODEL
+            return FastEmbedProvider(model_name=model)
+        elif provider_name == "openai":
             if not settings.EMBEDDING_API_KEY:
                 logger.warning("EMBEDDING_API_KEY missing for OpenAI. Falling back to TF-IDF.")
                 return TFIDFEmbeddingProvider()

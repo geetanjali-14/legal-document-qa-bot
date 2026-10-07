@@ -8,6 +8,7 @@ from app.models.chat import Message
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.telemetry import estimate_tokens
+from app.core.errors import TokenBudgetExceededError
 
 SYSTEM_PROMPT = """You are a document-grounded legal information assistant.
 
@@ -104,6 +105,16 @@ class MockLLMProvider(BaseLLMProvider):
 
         latency_ms = max(0.0, (time.perf_counter() - t_start) * 1000.0)
 
+        # Bound output text to configured MAX_OUTPUT_TOKENS
+        max_output_tokens = settings.MAX_OUTPUT_TOKENS or settings.LLM_MAX_TOKENS
+        max_output_chars = max_output_tokens * 4
+        if len(answer_text) > max_output_chars:
+            truncated = answer_text[:max_output_chars]
+            if " " in truncated:
+                answer_text = truncated.rsplit(" ", 1)[0] + "..."
+            else:
+                answer_text = truncated + "..."
+
         # Build prompt representation to estimate input tokens
         prompt_content = f"{SYSTEM_PROMPT}\n\n" + "\n\n".join(context_chunks) + f"\n\nQuestion: {question}"
         est_in = estimate_tokens(prompt_content)
@@ -166,7 +177,7 @@ class OpenAILLMProvider(BaseLLMProvider):
             "model": self.model,
             "messages": messages,
             "temperature": settings.LLM_TEMPERATURE,
-            "max_tokens": settings.LLM_MAX_TOKENS
+            "max_tokens": settings.MAX_OUTPUT_TOKENS or settings.LLM_MAX_TOKENS
         }
 
         t_start = time.perf_counter()
@@ -240,5 +251,15 @@ class LLMService:
         context_chunks: List[str],
         history: Optional[List[Message]] = None
     ) -> LLMResponse:
+        # Enforce prompt/input token budget ceiling before invoking LLM
+        prompt_content = f"{SYSTEM_PROMPT}\n\n" + "\n\n".join(context_chunks) + f"\n\nQuestion: {question}"
+        if history:
+            prompt_content += "\n" + "\n".join(f"{m.role}: {m.content}" for m in history)
+        est_tokens = estimate_tokens(prompt_content)
+        if est_tokens > settings.MAX_PROMPT_TOKENS:
+            raise TokenBudgetExceededError(
+                f"Estimated prompt tokens ({est_tokens}) exceeds maximum configured budget of {settings.MAX_PROMPT_TOKENS} tokens."
+            )
+
         return self.provider.generate_answer(question, context_chunks, history)
 

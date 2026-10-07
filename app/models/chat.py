@@ -20,9 +20,9 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     document_id: str
-    question: str = Field(..., min_length=2, max_length=1500)
+    question: str = Field(..., min_length=2)
     history: Optional[List[Message]] = Field(default_factory=list)
-    top_k: Optional[int] = Field(default=None, ge=1, le=20)
+    top_k: Optional[int] = Field(default=None, ge=1)
 
 
 class ChatResponse(BaseModel):

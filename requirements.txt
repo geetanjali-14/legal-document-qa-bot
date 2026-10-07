@@ -11,6 +11,7 @@ pymupdf>=1.24.0
 # Numerical & ML / Vector Search
 numpy>=1.26.0,<2.2.0
 scikit-learn>=1.4.0
+fastembed>=0.3.0
 
 # HTTP client & utilities
 httpx>=0.27.0

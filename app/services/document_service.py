@@ -2,6 +2,7 @@ import json
 import uuid
 import re
 import time
+import hashlib
 from pathlib import Path
 from typing import List, Optional, Dict
 from app.models.document import DocumentMetadata, DocumentChunk
@@ -11,12 +12,16 @@ from app.services.embedding_service import EmbeddingService
 from app.services.vector_store import VectorStore
 from app.core.config import settings
 from app.core.logging import logger
+from app.core.errors import (
+    ResourceLimitError,
+    FileSizeLimitExceededError,
+    ChunkLimitExceededError
+)
 from app.core.telemetry import (
     DocumentProcessingTelemetry,
     record_document_telemetry,
     pricing_registry
 )
-
 
 
 class DocumentService:
@@ -36,6 +41,7 @@ class DocumentService:
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_file = self.upload_dir / "documents_meta.json"
         self.documents: Dict[str, DocumentMetadata] = {}
+        self._hash_to_id: Dict[str, str] = {}
         self._load_metadata()
 
     def _load_metadata(self) -> None:
@@ -43,9 +49,28 @@ class DocumentService:
             try:
                 with open(self.metadata_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                    updated = False
                     for item in data:
                         meta = DocumentMetadata(**item)
+                        # Backfill content_hash if missing from historical metadata
+                        if not meta.content_hash:
+                            saved_path = self.upload_dir / meta.filename
+                            if saved_path.exists():
+                                try:
+                                    with open(saved_path, "rb") as f_bytes:
+                                        meta.content_hash = hashlib.sha256(f_bytes.read()).hexdigest()
+                                    updated = True
+                                    logger.info(f"Backfilled content_hash for document {meta.document_id}")
+                                except Exception as err:
+                                    logger.warning(f"Could not backfill hash for {meta.document_id}: {err}")
+
                         self.documents[meta.document_id] = meta
+                        if meta.content_hash:
+                            self._hash_to_id[meta.content_hash] = meta.document_id
+
+                    if updated:
+                        self._save_metadata()
+
                 logger.info(f"Loaded {len(self.documents)} document records from metadata store.")
             except Exception as e:
                 logger.error(f"Failed to load document metadata: {e}")
@@ -63,18 +88,80 @@ class DocumentService:
         clean = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', clean)
         return clean or "document.pdf"
 
+    def find_by_content_hash(self, content_hash: str) -> Optional[DocumentMetadata]:
+        """Look up existing document metadata by SHA-256 content hash."""
+        doc_id = self._hash_to_id.get(content_hash)
+        if doc_id and doc_id in self.documents:
+            return self.documents[doc_id]
+        for doc in self.documents.values():
+            if doc.content_hash == content_hash:
+                self._hash_to_id[content_hash] = doc.document_id
+                return doc
+        return None
+
     def process_document(self, file_bytes: bytes, original_filename: str) -> DocumentMetadata:
         """
         Validate, store, extract, chunk, embed, and index an uploaded document.
+        Detects duplicates based on SHA-256 hash of raw bytes before any expensive processing.
         """
         # Validate file size
         max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
         if len(file_bytes) > max_bytes:
-            raise ValueError(f"File size exceeds maximum allowed limit of {settings.MAX_FILE_SIZE_MB}MB.")
+            raise FileSizeLimitExceededError(
+                f"File size ({len(file_bytes)} bytes) exceeds maximum allowed limit of {settings.MAX_FILE_SIZE_MB}MB."
+            )
 
         if not file_bytes.startswith(b"%PDF"):
             raise ValueError("Invalid file format. Only standard PDF documents are supported.")
 
+        t_process_start = time.perf_counter()
+
+        # Compute canonical content hash
+        content_hash = hashlib.sha256(file_bytes).hexdigest()
+
+        # Check for existing duplicate document by content hash
+        existing_doc = self.find_by_content_hash(content_hash)
+        if existing_doc:
+            # Check for corrupt/inconsistent state: metadata exists but vector store data missing
+            if not self.vector_store.has_document(existing_doc.document_id):
+                raise RuntimeError(
+                    f"Document {existing_doc.document_id} metadata exists with matching hash "
+                    f"but vector data is unexpectedly missing or corrupted."
+                )
+
+            t_dup_end = time.perf_counter()
+            total_latency_ms = max(0.0, (t_dup_end - t_process_start) * 1000.0)
+
+            # Record duplicate detection telemetry (skipped work is NOT reported as completed)
+            dup_telemetry = DocumentProcessingTelemetry(
+                event="document_duplicate_detected",
+                document_id=existing_doc.document_id,
+                filename=self.sanitize_filename(original_filename),
+                file_size_bytes=len(file_bytes),
+                page_count=existing_doc.page_count,
+                chunk_count=existing_doc.chunk_count,
+                extraction_latency_ms=0.0,
+                chunking_latency_ms=0.0,
+                embedding_latency_ms=0.0,
+                indexing_latency_ms=0.0,
+                total_latency_ms=round(total_latency_ms, 2),
+                embedding_provider=settings.EMBEDDING_PROVIDER,
+                embedding_model=settings.EMBEDDING_MODEL,
+                embedding_tokens=None,
+                estimated_embedding_cost=None,
+                status="duplicate_reused",
+                is_duplicate=True,
+                content_hash=content_hash
+            )
+            record_document_telemetry(dup_telemetry)
+
+            logger.info(
+                f"Duplicate document detected (hash={content_hash[:12]}..., file='{original_filename}'). "
+                f"Reusing existing document {existing_doc.document_id} in {total_latency_ms:.2f}ms."
+            )
+            return existing_doc
+
+        # Document does not exist: proceed with standard ingestion
         doc_id = f"doc_{uuid.uuid4().hex[:12]}"
         safe_name = f"{doc_id}_{self.sanitize_filename(original_filename)}"
         saved_path = self.upload_dir / safe_name
@@ -82,7 +169,6 @@ class DocumentService:
         with open(saved_path, "wb") as f:
             f.write(file_bytes)
 
-        t_process_start = time.perf_counter()
         try:
             # 1. Extract text and pages
             t_extract_start = time.perf_counter()
@@ -102,7 +188,7 @@ class DocumentService:
                 raise ValueError("No extractable chunks found in document.")
 
             if len(chunks) > settings.MAX_CHUNKS_PER_DOC:
-                raise ValueError(
+                raise ChunkLimitExceededError(
                     f"Document generated {len(chunks)} chunks, exceeding max limit of {settings.MAX_CHUNKS_PER_DOC}."
                 )
 
@@ -126,9 +212,13 @@ class DocumentService:
                 file_size_bytes=len(file_bytes),
                 page_count=len(pages),
                 chunk_count=len(chunks),
+                content_hash=content_hash,
+                embedding_provider=settings.EMBEDDING_PROVIDER,
+                embedding_model=getattr(self.embedding_service.provider, "model_name", settings.EMBEDDING_MODEL),
                 status="processed"
             )
             self.documents[doc_id] = meta
+            self._hash_to_id[content_hash] = doc_id
             self._save_metadata()
 
             # Record document processing telemetry (safe metrics, no raw content)
@@ -154,12 +244,15 @@ class DocumentService:
                 embedding_provider=settings.EMBEDDING_PROVIDER,
                 embedding_model=settings.EMBEDDING_MODEL,
                 embedding_tokens=emb_tokens,
-                estimated_embedding_cost=emb_cost
+                estimated_embedding_cost=emb_cost,
+                status="success",
+                is_duplicate=False,
+                content_hash=content_hash
             )
             record_document_telemetry(doc_telemetry)
 
             logger.info(
-                f"Successfully processed document {original_filename} (ID: {doc_id}) "
+                f"Successfully processed document {original_filename} (ID: {doc_id}, hash={content_hash[:12]}...) "
                 f"in {total_latency_ms:.2f}ms [pages={len(pages)}, chunks={len(chunks)}]"
             )
             return meta
@@ -169,6 +262,37 @@ class DocumentService:
             if saved_path.exists():
                 saved_path.unlink()
             self.vector_store.delete_document(doc_id)
+            if doc_id in self.documents:
+                del self.documents[doc_id]
+            if content_hash in self._hash_to_id:
+                del self._hash_to_id[content_hash]
+
+            # Record failure / rejection telemetry
+            t_err_end = time.perf_counter()
+            err_latency_ms = max(0.0, (t_err_end - t_process_start) * 1000.0)
+            err_cat = getattr(e, "error_category", None)
+            fail_status = "rejected" if isinstance(e, ResourceLimitError) else "failed"
+
+            err_telemetry = DocumentProcessingTelemetry(
+                document_id=doc_id,
+                filename=self.sanitize_filename(original_filename),
+                file_size_bytes=len(file_bytes),
+                page_count=0,
+                chunk_count=0,
+                extraction_latency_ms=0.0,
+                chunking_latency_ms=0.0,
+                embedding_latency_ms=0.0,
+                indexing_latency_ms=0.0,
+                total_latency_ms=round(err_latency_ms, 2),
+                embedding_provider=settings.EMBEDDING_PROVIDER,
+                embedding_model=settings.EMBEDDING_MODEL,
+                status=fail_status,
+                error_category=err_cat,
+                is_duplicate=False,
+                content_hash=content_hash
+            )
+            record_document_telemetry(err_telemetry)
+
             raise e
 
     def list_documents(self) -> List[DocumentMetadata]:
@@ -182,6 +306,9 @@ class DocumentService:
             return False
 
         meta = self.documents[document_id]
+        if meta.content_hash and meta.content_hash in self._hash_to_id:
+            del self._hash_to_id[meta.content_hash]
+
         file_path = self.upload_dir / meta.filename
         if file_path.exists():
             file_path.unlink()
@@ -191,3 +318,4 @@ class DocumentService:
         self._save_metadata()
         logger.info(f"Deleted document {document_id}")
         return True
+
