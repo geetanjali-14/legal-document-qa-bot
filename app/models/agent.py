@@ -6,6 +6,7 @@ from app.core.telemetry import ChatTelemetry
 
 
 class IntentType(str, Enum):
+    GENERAL_QA = "GENERAL_QA"
     METADATA = "METADATA"
     DOCUMENT_OVERVIEW = "DOCUMENT_OVERVIEW"
     STRUCTURE_NAVIGATION = "STRUCTURE_NAVIGATION"

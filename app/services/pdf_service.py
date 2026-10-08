@@ -63,6 +63,7 @@ class PDFService:
             pages_content: List[PageContent] = []
             total_chars = 0
 
+            # Layout-aware extraction preserving legal clause and block boundaries
             for page_index in range(doc.page_count):
                 page = doc.load_page(page_index)
                 blocks = page.get_text("blocks")
@@ -84,7 +85,7 @@ class PDFService:
                 raw_text = "\n\n".join(cleaned_blocks) if cleaned_blocks else page.get_text("text")
                 cleaned = self.clean_text(raw_text)
 
-                # P4-DOC: Selective OCR hook for image-based/low-text pages
+                # Selective OCR hook for image-based/low-text pages
                 if len(cleaned) < self.min_char_threshold_per_page:
                     cleaned_ocr = self._attempt_selective_ocr(page, page_index + 1)
                     if cleaned_ocr:
@@ -101,9 +102,41 @@ class PDFService:
                     )
                 )
 
-            # Check if document has no text at all across all pages
+            # If document appears scanned or has virtually no text, attempt Docling
             if total_chars < (self.min_char_threshold_per_page * len(pages_content)):
-                # If there are pages but virtually no text, it is likely scanned
+                try:
+                    from docling.document_converter import DocumentConverter
+                    converter = DocumentConverter()
+                    res = converter.convert(str(pdf_path))
+                    d_doc = res.document
+                    docling_pages: dict = {}
+                    for item, _ in d_doc.iterate_items():
+                        text = getattr(item, "text", "")
+                        if not text or not text.strip():
+                            continue
+                        prov = getattr(item, "prov", None)
+                        p_no = prov[0].page_no if (prov and len(prov) > 0) else 1
+                        docling_pages.setdefault(p_no, []).append(text.strip())
+
+                    if docling_pages:
+                        pages_content = []
+                        total_chars = 0
+                        for p_num in range(1, doc.page_count + 1):
+                            p_items = docling_pages.get(p_num, [])
+                            page_text = self.clean_text("\n\n".join(p_items))
+                            c_count = len(page_text)
+                            total_chars += c_count
+                            pages_content.append(
+                                PageContent(
+                                    page_number=p_num,
+                                    text=page_text,
+                                    char_count=c_count
+                                )
+                            )
+                except Exception as d_err:
+                    logger.debug(f"Docling fallback skipped or failed for {pdf_path.name}: {d_err}")
+
+            if total_chars < (self.min_char_threshold_per_page * len(pages_content)):
                 raise ScannedPDFError(
                     "This document appears to be scanned or image-based and does not contain extractable text. "
                     "OCR support is required to process this document."

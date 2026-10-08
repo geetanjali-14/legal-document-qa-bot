@@ -111,10 +111,26 @@ RISK_PATTERNS = [
     r"\bunfavorable\s+terms\b",
 ]
 
+# Patterns for GENERAL_QA intent (world knowledge, date/time, programming, greetings)
+GENERAL_PATTERNS = [
+    r"^(?:hi|hello|hey|good\s+morning|good\s+afternoon|good\s+evening)\b",
+    r"\bwhat\s+(?:is|was)\s+the\s+(?:day|date|time)\s+today\b",
+    r"\bwhat\s+day\s+is\s+(?:it\s+)?today\b",
+    r"\btoday'?s\s+date\b",
+    r"\bcurrent\s+(?:date|time|day)\b",
+    r"\bwhat\s+is\s+python\b",
+    r"\bexplain\s+authentication\b",
+    r"\bwhat\s+is\s+(?:rest|graphql|docker|kubernetes|javascript|typescript|fastapi)\b",
+    r"\bwho\s+are\s+you\b",
+    r"\bwhat\s+can\s+you\s+do\b",
+    r"\bhow\s+does\s+the\s+internet\s+work\b",
+]
+
 
 class IntentRouter:
     """
-    Controlled hybrid router classifying user inquiries across 7 operational intents.
+    Controlled hybrid router classifying user inquiries across operational intents.
+    Distinguishes general knowledge/time questions from document-specific queries.
     Supports multi-intent decomposition without unconstrained LLM dependencies.
     """
 
@@ -127,6 +143,7 @@ class IntentRouter:
         self._whole_doc_regex = [re.compile(p, re.IGNORECASE) for p in WHOLE_DOCUMENT_PATTERNS]
         self._obligation_regex = [re.compile(p, re.IGNORECASE) for p in OBLIGATION_PATTERNS]
         self._risk_regex = [re.compile(p, re.IGNORECASE) for p in RISK_PATTERNS]
+        self._general_regex = [re.compile(p, re.IGNORECASE) for p in GENERAL_PATTERNS]
 
     def route_query(self, query: str) -> IntentRoutingResult:
         """
@@ -135,6 +152,18 @@ class IntentRouter:
         cleaned_query = query.strip()
         matched_intents: List[IntentType] = []
         sub_intents: List[Dict[str, Any]] = []
+
+        # Check for General QA / Out-of-document inquiries first
+        has_general = any(rx.search(cleaned_query) for rx in self._general_regex)
+        if has_general:
+            return IntentRoutingResult(
+                primary_intent=IntentType.GENERAL_QA,
+                intents=[IntentType.GENERAL_QA],
+                confidence=0.98,
+                is_multi_intent=False,
+                sub_intents=[{"intent": IntentType.GENERAL_QA.value, "query": cleaned_query}],
+                reasoning="General question routed directly to LLM without document retrieval."
+            )
 
         # Check for Metadata matches
         matched_meta_attr = self._detect_metadata_attribute(cleaned_query)
@@ -234,6 +263,9 @@ class IntentRouter:
             r"\btell\s+me\s+a\s+joke\b",
             r"\bweather\s+in\b",
             r"\bwho\s+is\s+the\s+president\b",
+            r"\bignore\s+previous\s+instructions\b",
+            r"\boutput\s+all\s+(?:environment\s+variables|secrets|keys)\b",
+            r"\bsystem\s+prompt\b",
         ]
         if any(re.search(p, cleaned_query, re.IGNORECASE) for p in unsupported_markers):
             return IntentRoutingResult(
@@ -257,13 +289,14 @@ class IntentRouter:
 
     def _detect_metadata_attribute(self, query: str) -> Optional[str]:
         q = query.lower()
-        if "page" in q:
+        # Page count / number of pages queries (avoid matching 'which page contains X' or 'what is on page X')
+        if any(p in q for p in ["how many pages", "page count", "number of pages", "total pages"]):
             return "page_count"
         if "filename" in q or "name of this" in q or "file name" in q:
             return "filename"
         if "size" in q or "large" in q or "bytes" in q:
             return "file_size"
-        if "chunk" in q:
+        if any(c in q for c in ["how many chunks", "chunk count", "number of chunks", "total chunks"]):
             return "chunk_count"
         if "upload" in q:
             return "created_at"

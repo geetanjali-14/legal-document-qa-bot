@@ -118,6 +118,10 @@ class AgentOrchestrator:
         )
 
         # 3. Branch by Intent
+        # Case 0: General QA / world knowledge query (bypasses document retrieval)
+        if primary_intent == IntentType.GENERAL_QA:
+            return self._handle_general_qa(document_id, rewritten_query, audit_trace, t_start, req_id, history)
+
         # Case A: Deterministic METADATA query (0 LLM tokens)
         if primary_intent == IntentType.METADATA and not routing_result.is_multi_intent:
             return self._handle_metadata(document_id, rewritten_query, routing_result, audit_trace, t_start, req_id)
@@ -776,6 +780,50 @@ class AgentOrchestrator:
             total_latency_ms=round(total_latency, 2)
         )
         return clarification_msg, [], UncertaintyState.CLARIFICATION_REQUIRED.value, audit_trace, telemetry
+
+    def _handle_general_qa(
+        self,
+        document_id: str,
+        query: str,
+        audit_trace: AgentAuditTrace,
+        t_start: float,
+        req_id: str,
+        history: Optional[List[Message]]
+    ) -> Tuple[str, List[Citation], str, AgentAuditTrace, ChatTelemetry]:
+        """Handles general knowledge, date/time, greeting queries directly without document retrieval."""
+        audit_trace.answer_derivation_type = "general_knowledge"
+        audit_trace.selected_tools = []
+        audit_trace.final_evidence_state = UncertaintyState.SUPPORTED.value
+
+        llm_res = self.llm_service.generate_answer(
+            question=query,
+            context_chunks=[],
+            history=history
+        )
+        total_latency = max(0.0, (time.perf_counter() - t_start) * 1000.0)
+        telemetry = ChatTelemetry(
+            request_id=req_id,
+            timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            document_id=document_id,
+            status="success",
+            retrieval_latency_ms=0.0,
+            embedding_latency_ms=0.0,
+            llm_latency_ms=llm_res.latency_ms,
+            total_latency_ms=round(total_latency, 2),
+            llm_provider=llm_res.provider,
+            llm_model=llm_res.model,
+            input_tokens=llm_res.input_tokens,
+            output_tokens=llm_res.output_tokens,
+            total_tokens=llm_res.total_tokens,
+            token_usage_type=llm_res.token_usage_type,
+            cost_estimate_usd=pricing_registry.calculate_cost(
+                llm_res.provider,
+                llm_res.model,
+                llm_res.input_tokens or llm_res.estimated_input_tokens or 0,
+                llm_res.output_tokens or llm_res.estimated_output_tokens or 0
+            )
+        )
+        return llm_res.content, [], UncertaintyState.SUPPORTED.value, audit_trace, telemetry
 
     def _handle_unsupported(
         self,

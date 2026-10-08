@@ -58,9 +58,9 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int = 1024
 
     # Embedding Provider
-    EMBEDDING_PROVIDER: Literal["mock", "tfidf", "fastembed", "openai", "ollama"] = "tfidf"
+    EMBEDDING_PROVIDER: Literal["mock", "tfidf", "fastembed", "openai", "ollama", "gemini"] = "tfidf"
     EMBEDDING_API_KEY: str = ""
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_MODEL: str = "text-embedding-004"
     EMBEDDING_BASE_URL: str = ""
 
     # OCR Provider

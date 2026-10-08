@@ -1366,11 +1366,37 @@ button, input, textarea {
 }
 
 /* ==========================================
-   Responsive Adaptations
+   Responsive Adaptations (Tablet & Mobile)
+   Preserves 100% of desktop styles (>1024px)
    ========================================== */
+
+/* Tablets & Small Laptops (<= 1024px) */
+@media (max-width: 1024px) {
+  .source-inspector {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 320px;
+    z-index: 35;
+    box-shadow: -6px 0 24px rgba(15, 23, 42, 0.15);
+  }
+
+  .documents-view {
+    padding: 24px 28px;
+  }
+
+  .documents-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+}
+
+/* Tablets & Mobile Navigation (<= 860px) */
 @media (max-width: 860px) {
   .sidebar-toggle {
     display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .sidebar {
@@ -1382,6 +1408,8 @@ button, input, textarea {
     box-shadow: var(--shadow-lg);
     transform: translateX(-100%);
     transition: transform 0.25s ease;
+    width: 280px;
+    max-width: 85vw;
   }
 
   .main-layout.sidebar-open .sidebar {
@@ -1394,6 +1422,19 @@ button, input, textarea {
     background: rgba(15, 23, 42, 0.4);
     z-index: 30;
     border: none;
+    cursor: pointer;
+  }
+
+  .chat-header-bar {
+    padding: 10px 16px;
+  }
+
+  .chat-messages {
+    padding: 16px 20px;
+  }
+
+  .chat-input-container {
+    padding: 12px 16px 14px;
   }
 
   .suggested-questions-grid {
@@ -1401,6 +1442,167 @@ button, input, textarea {
   }
 
   .documents-view {
-    padding: 20px;
+    padding: 20px 16px;
+  }
+
+  .message {
+    max-width: 88%;
+  }
+}
+
+/* Mobile Phones (<= 600px) */
+@media (max-width: 600px) {
+  .app-header {
+    padding: 0 12px;
+    height: 52px;
+  }
+
+  .main-layout {
+    height: calc(100vh - 52px);
+  }
+
+  .brand-copy h1 {
+    font-size: 0.94rem;
+  }
+
+  .top-nav {
+    gap: 4px;
+  }
+
+  .top-nav-btn {
+    padding: 5px 10px;
+    font-size: 0.8rem;
+  }
+
+  .chat-header-bar {
+    padding: 8px 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .selected-doc-label {
+    max-width: 170px;
+  }
+
+  .doc-dropdown-menu {
+    width: calc(100vw - 24px);
+    max-width: 340px;
+  }
+
+  .empty-workspace {
+    padding: 12px 0;
+    gap: 14px;
+  }
+
+  .empty-greeting h2 {
+    font-size: 1.3rem;
+  }
+
+  .empty-greeting p {
+    font-size: 0.86rem;
+  }
+
+  .empty-doc-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .suggested-question-btn {
+    padding: 12px 14px;
+    font-size: 0.82rem;
+  }
+
+  .chat-messages {
+    padding: 12px 12px;
+    gap: 14px;
+  }
+
+  .message {
+    max-width: 95%;
+  }
+
+  .message-content {
+    padding: 11px 14px;
+    font-size: 0.88rem;
+  }
+
+  .chat-input-container {
+    padding: 10px 12px 12px;
+  }
+
+  #questionInput {
+    padding: 10px 12px;
+    font-size: 0.88rem;
+  }
+
+  #sendBtn {
+    padding: 0 14px;
+    height: 42px;
+    font-size: 0.86rem;
+  }
+
+  /* Full screen / modal drawers on small screens */
+  .source-inspector {
+    width: 100%;
+    border-left: none;
+  }
+
+  .docs-view-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+
+  .docs-view-title-group h2 {
+    font-size: 1.3rem;
+  }
+
+  .docs-view-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .docs-view-actions button {
+    flex: 1;
+    text-align: center;
+    justify-content: center;
+  }
+
+  .documents-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .doc-card {
+    padding: 14px;
+  }
+
+  .doc-card-actions {
+    flex-wrap: wrap;
+  }
+
+  .app-dialog {
+    width: 94vw;
+    margin: auto;
+  }
+
+  .pdf-modal {
+    width: 96vw;
+    height: 90vh;
+  }
+
+  .pdf-modal-body {
+    height: calc(90vh - 60px);
+  }
+
+  .status-box.toast {
+    left: 12px;
+    right: 12px;
+    bottom: 16px;
+    text-align: center;
   }
 }

@@ -184,3 +184,15 @@ Report:
 * Any remaining issues.
 * Anything that could not be verified.
 
+---
+
+## 11. TOKEN OPTIMIZATION
+
+Always practice token-optimized programming and communication:
+
+* **Minimal Waste**: Do not waste tokens in prompts, code responses, explanations, or context. Keep explanations concise, direct, and focused.
+* **Context Compacting**: Periodically compact or summarize long chat context/history to prevent unnecessary bloat.
+* **Concise/Caveman Style**: Use concise phrasing / "caveman style" (drop conversational filler, pleasantries, and unnecessary fluff) for long prompts, large contexts, and routine technical exchanges.
+* **Targeted Code Changes**: Avoid rewriting entire files or large untouched blocks when small, precise diffs suffice.
+* **Tool & Output Discipline**: Inspect only relevant line ranges or snippets rather than dumping entire large files when unneeded.
+

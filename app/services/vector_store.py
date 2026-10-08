@@ -1,7 +1,10 @@
 import json
+import uuid
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 import numpy as np
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct
 from app.models.document import DocumentChunk
 from app.core.config import settings
 from app.core.logging import logger
@@ -10,16 +13,34 @@ from app.core.errors import EmbeddingDimensionMismatchError
 
 class VectorStore:
     """
-    Production-grade local vector store with cosine similarity, metadata filtering,
-    and persistent JSON/NPZ backing.
+    Production-grade local vector store backed by local embedded Qdrant with
+    memory cache and disk persistence. Provides document isolation, deterministic
+    chunk IDs, safe re-indexing, and metadata filtering.
     """
     def __init__(self, storage_dir: Optional[Path] = None):
         self.storage_dir = storage_dir or settings.VECTOR_STORE_DIR
         self.storage_dir.mkdir(parents=True, exist_ok=True)
+
+        # Local embedded Qdrant DB directory
+        self.qdrant_dir = self.storage_dir / "qdrant_db"
+        self.qdrant_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            self.qdrant_client = QdrantClient(path=str(self.qdrant_dir))
+            logger.info(f"Initialized local embedded Qdrant client at {self.qdrant_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize file-based Qdrant, falling back to memory: {e}")
+            self.qdrant_client = QdrantClient(":memory:")
+
         # In-memory document stores: doc_id -> chunks, doc_id -> embeddings matrix
         self.chunks_by_doc: Dict[str, List[DocumentChunk]] = {}
         self.vectors_by_doc: Dict[str, np.ndarray] = {}
         self._load_all_persisted()
+
+    def _get_collection_name(self, document_id: str) -> str:
+        # Qdrant collection name sanitized
+        clean_id = document_id.replace("-", "_").lower()
+        return f"doc_{clean_id}"
 
     def _get_doc_vector_path(self, document_id: str) -> Path:
         return self.storage_dir / f"{document_id}_vectors.npy"
@@ -60,9 +81,53 @@ class VectorStore:
 
                     self.chunks_by_doc[doc_id] = chunks
                     self.vectors_by_doc[doc_id] = vectors
+                    self._sync_to_qdrant(doc_id, chunks, vectors)
                     logger.info(f"Loaded persisted vector store for doc {doc_id} ({len(chunks)} chunks)")
                 except Exception as e:
                     logger.error(f"Error loading persisted vectors for {doc_id}: {str(e)}")
+
+    def _sync_to_qdrant(self, document_id: str, chunks: List[DocumentChunk], normalized_vectors: np.ndarray) -> None:
+        """Syncs document vectors and payload metadata into local Qdrant collection."""
+        try:
+            col_name = self._get_collection_name(document_id)
+            dim = int(normalized_vectors.shape[1])
+            # Recreate or ensure collection
+            existing_cols = [c.name for c in self.qdrant_client.get_collections().collections]
+            if col_name in existing_cols:
+                self.qdrant_client.delete_collection(col_name)
+
+            self.qdrant_client.create_collection(
+                collection_name=col_name,
+                vectors_config=VectorParams(size=dim, distance=Distance.COSINE)
+            )
+
+            points = []
+            for idx, (chunk, vec) in enumerate(zip(chunks, normalized_vectors)):
+                deterministic_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{document_id}_{chunk.chunk_id or idx}"))
+                payload = {
+                    "document_id": document_id,
+                    "chunk_id": chunk.chunk_id,
+                    "chunk_index": idx,
+                    "page_number": chunk.page_number,
+                    "section_title": chunk.section,
+                    "section_number": getattr(chunk, "section_number", None),
+                    "clause_number": getattr(chunk, "clause_number", None),
+                    "text": chunk.text,
+                }
+                points.append(
+                    PointStruct(
+                        id=deterministic_uuid,
+                        vector=vec.tolist(),
+                        payload=payload
+                    )
+                )
+
+            self.qdrant_client.upsert(
+                collection_name=col_name,
+                points=points
+            )
+        except Exception as e:
+            logger.warning(f"Qdrant sync for doc {document_id} warning: {e}")
 
     def get_index_metadata(self, document_id: str) -> Optional[Dict]:
         """Load persisted index metadata (provider, model, dimension) for document."""
@@ -83,7 +148,7 @@ class VectorStore:
         embedding_provider: Optional[str] = None,
         embedding_model: Optional[str] = None
     ) -> None:
-        """Store chunk vectors, compatibility metadata, and serialize to disk."""
+        """Store chunk vectors, compatibility metadata, Qdrant collection, and serialize to disk."""
         if len(chunks) != len(embeddings):
             raise ValueError(f"Mismatch: {len(chunks)} chunks vs {len(embeddings)} vectors.")
 
@@ -94,6 +159,9 @@ class VectorStore:
 
         self.chunks_by_doc[document_id] = chunks
         self.vectors_by_doc[document_id] = normalized_vectors
+
+        # Sync to Qdrant collection
+        self._sync_to_qdrant(document_id, chunks, normalized_vectors)
 
         # Persist vectors and chunks to disk
         np.save(str(self._get_doc_vector_path(document_id)), normalized_vectors)
@@ -113,10 +181,10 @@ class VectorStore:
         with open(self._get_doc_meta_path(document_id), "w", encoding="utf-8") as f:
             json.dump(index_meta, f, indent=2)
 
-        logger.info(f"Stored {len(chunks)} chunks and vectors for document {document_id} [provider={prov}, model={mod}, dim={normalized_vectors.shape[1]}]")
+        logger.info(f"Stored {len(chunks)} chunks and vectors for document {document_id} in Qdrant [provider={prov}, model={mod}, dim={normalized_vectors.shape[1]}]")
 
     def delete_document(self, document_id: str) -> bool:
-        """Remove document from memory and disk."""
+        """Remove document from memory, disk, and Qdrant."""
         removed = False
         if document_id in self.chunks_by_doc:
             del self.chunks_by_doc[document_id]
@@ -124,6 +192,14 @@ class VectorStore:
         if document_id in self.vectors_by_doc:
             del self.vectors_by_doc[document_id]
             removed = True
+
+        try:
+            col_name = self._get_collection_name(document_id)
+            existing_cols = [c.name for c in self.qdrant_client.get_collections().collections]
+            if col_name in existing_cols:
+                self.qdrant_client.delete_collection(col_name)
+        except Exception as q_err:
+            logger.warning(f"Could not delete Qdrant collection for {document_id}: {q_err}")
 
         v_path = self._get_doc_vector_path(document_id)
         if v_path.exists():
@@ -152,7 +228,6 @@ class VectorStore:
         )
 
     def search(
-
         self,
         document_id: str,
         query_vector: np.ndarray,
@@ -161,6 +236,7 @@ class VectorStore:
     ) -> List[Tuple[DocumentChunk, float]]:
         """
         Execute cosine similarity search against chunks scoped specifically to document_id.
+        Queries local Qdrant collection, falling back to local normalized dot product.
         Prevents accidental cross-document contamination.
         """
         if document_id not in self.vectors_by_doc or document_id not in self.chunks_by_doc:
@@ -192,10 +268,30 @@ class VectorStore:
             q_norm = 1.0
         normalized_q = query_vector / q_norm
 
-        # Cosine similarity is dot product
-        similarities = np.dot(doc_vectors, normalized_q.T).flatten()
+        # Try Qdrant retrieval first
+        try:
+            col_name = self._get_collection_name(document_id)
+            res = self.qdrant_client.query_points(
+                collection_name=col_name,
+                query=normalized_q.flatten().tolist(),
+                limit=top_k,
+                score_threshold=similarity_threshold
+            )
+            qdrant_results = []
+            chunk_by_id = {c.chunk_id: c for c in chunks}
+            for pt in res.points:
+                c_id = pt.payload.get("chunk_id")
+                idx = pt.payload.get("chunk_index")
+                chunk_obj = chunk_by_id.get(c_id) or (chunks[idx] if idx is not None and idx < len(chunks) else None)
+                if chunk_obj:
+                    qdrant_results.append((chunk_obj, float(pt.score)))
+            if qdrant_results:
+                return qdrant_results
+        except Exception as q_err:
+            logger.debug(f"Qdrant search fallback to dot product: {q_err}")
 
-        # Sort indices descending
+        # Fallback to in-memory cosine similarity
+        similarities = np.dot(doc_vectors, normalized_q.T).flatten()
         sorted_indices = np.argsort(similarities)[::-1]
 
         results: List[Tuple[DocumentChunk, float]] = []

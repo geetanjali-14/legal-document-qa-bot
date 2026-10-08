@@ -82,7 +82,20 @@ class MockLLMProvider(BaseLLMProvider):
         t_start = time.perf_counter()
 
         if not context_chunks:
-            answer_text = "I couldn't find enough information in the uploaded document to answer this question."
+            # Deterministic general answering for world-knowledge / meta questions
+            lower_q = question.lower()
+            if "day today" in lower_q or "date today" in lower_q:
+                import datetime
+                now_str = datetime.datetime.now().strftime("%A, %B %d, %Y")
+                answer_text = f"Today is {now_str}."
+            elif "python" in lower_q:
+                answer_text = "Python is a high-level, general-purpose programming language known for readability."
+            elif "authentication" in lower_q:
+                answer_text = "Authentication is the process of verifying the identity of a user or system."
+            elif any(g in lower_q for g in ["hello", "hi", "hey", "good morning", "good evening"]):
+                answer_text = "Hello! I am your Legal Document QA Assistant. How can I assist you today?"
+            else:
+                answer_text = "I couldn't find enough information in the uploaded document to answer this question."
         else:
             combined_context = "\n".join(context_chunks)
             lower_q = question.lower()
@@ -167,32 +180,34 @@ class OpenAILLMProvider(BaseLLMProvider):
         context_chunks: List[str],
         history: Optional[List[Message]] = None
     ) -> LLMResponse:
-        if not context_chunks:
-            return LLMResponse(
-                content="I couldn't find enough information in the uploaded document to answer this question.",
-                token_usage_type="unknown",
-                provider="openai",
-                model=self.model,
-                latency_ms=0.0
+        import datetime
+        now_str = datetime.datetime.now().strftime("%A, %B %d, %Y")
+
+        if context_chunks:
+            context_str = "\n\n---\n\n".join(context_chunks)
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+            ]
+            if history:
+                for msg in history[-4:]:
+                    messages.append({"role": msg.role, "content": msg.content})
+            prompt_content = (
+                f"CONTEXT FROM UPLOADED DOCUMENT (UNTRUSTED EVIDENTIARY DATA):\n"
+                f"{CONTEXT_START_TAG}\n"
+                f"{context_str}\n"
+                f"{CONTEXT_END_TAG}\n\n"
+                f"QUESTION: {question}"
             )
-
-        context_str = "\n\n---\n\n".join(context_chunks)
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-        ]
-
-        if history:
-            for msg in history[-4:]:  # Keep recent history
-                messages.append({"role": msg.role, "content": msg.content})
-
-        prompt_content = (
-            f"CONTEXT FROM UPLOADED DOCUMENT (UNTRUSTED EVIDENTIARY DATA):\n"
-            f"{CONTEXT_START_TAG}\n"
-            f"{context_str}\n"
-            f"{CONTEXT_END_TAG}\n\n"
-            f"QUESTION: {question}"
-        )
-        messages.append({"role": "user", "content": prompt_content})
+            messages.append({"role": "user", "content": prompt_content})
+        else:
+            messages = [
+                {"role": "system", "content": f"You are a helpful assistant. Today's date is {now_str}. Answer concisely."},
+            ]
+            if history:
+                for msg in history[-4:]:
+                    messages.append({"role": msg.role, "content": msg.content})
+            messages.append({"role": "user", "content": question})
+            prompt_content = question
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -280,16 +295,26 @@ class GeminiLLMProvider(BaseLLMProvider):
         context_chunks: List[str],
         history: Optional[List[Message]] = None
     ) -> LLMResponse:
-        if not context_chunks:
-            return LLMResponse(
-                content="I couldn't find enough information in the uploaded document to answer this question.",
-                token_usage_type="unknown",
-                provider="gemini",
-                model=self.model,
-                latency_ms=0.0
-            )
+        import datetime
+        now_str = datetime.datetime.now().strftime("%A, %B %d, %Y")
 
-        context_str = "\n\n---\n\n".join(context_chunks)
+        if context_chunks:
+            context_str = "\n\n---\n\n".join(context_chunks)
+            system_instruction = SYSTEM_PROMPT
+            prompt_content = (
+                f"CONTEXT FROM UPLOADED DOCUMENT (UNTRUSTED EVIDENTIARY DATA):\n"
+                f"{CONTEXT_START_TAG}\n"
+                f"{context_str}\n"
+                f"{CONTEXT_END_TAG}\n\n"
+                f"QUESTION: {question}"
+            )
+        else:
+            # General / world knowledge question without document context
+            system_instruction = (
+                f"You are a helpful, professional assistant. "
+                f"Today's date is {now_str}. Answer the user's question directly, clearly, and concisely."
+            )
+            prompt_content = f"QUESTION: {question}"
 
         # Assemble bounded contents preserving role history
         from google.genai import types, errors
@@ -305,13 +330,6 @@ class GeminiLLMProvider(BaseLLMProvider):
                     )
                 )
 
-        prompt_content = (
-            f"CONTEXT FROM UPLOADED DOCUMENT (UNTRUSTED EVIDENTIARY DATA):\n"
-            f"{CONTEXT_START_TAG}\n"
-            f"{context_str}\n"
-            f"{CONTEXT_END_TAG}\n\n"
-            f"QUESTION: {question}"
-        )
         contents.append(
             types.Content(
                 role="user",
@@ -323,27 +341,57 @@ class GeminiLLMProvider(BaseLLMProvider):
         temperature = settings.LLM_TEMPERATURE
 
         config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=system_instruction,
             temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            http_options=types.HttpOptions(timeout=45.0)
+            max_output_tokens=max_output_tokens
         )
 
         t_start = time.perf_counter()
-        try:
-            response = self._client.models.generate_content(
-                model=self.model,
-                contents=contents,
-                config=config
-            )
-        except errors.APIError as e:
-            safe_err = self._sanitize_error_message(e)
-            logger.error(f"Gemini API error (code={e.code}): {safe_err}")
-            raise RuntimeError(f"Gemini API error (code={e.code}): {safe_err}") from None
-        except Exception as e:
-            safe_err = self._sanitize_error_message(e)
-            logger.error(f"Gemini request failure: {safe_err}")
-            raise RuntimeError(f"Gemini request failure: {safe_err}") from None
+        response = None
+        candidate_models = [self.model, "gemini-3.5-flash", "gemini-3.1-flash-lite"]
+        # Deduplicate while preserving order
+        ordered_models = list(dict.fromkeys(candidate_models))
+
+        for model_name in ordered_models:
+            max_retries = 3
+            success = False
+            for attempt in range(max_retries):
+                try:
+                    response = self._client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=config
+                    )
+                    self.model = model_name
+                    success = True
+                    break
+                except errors.APIError as e:
+                    # Retry on 503 (service unavailable/spike) or transient rate limit
+                    if e.code == 503 and attempt < max_retries - 1:
+                        backoff = 2.0 * (attempt + 1)
+                        logger.warning(f"Gemini API returned {e.code}, retrying in {backoff}s (attempt {attempt+1}/{max_retries})...")
+                        time.sleep(backoff)
+                        continue
+                    if e.code == 429:
+                        logger.warning(f"Gemini model {model_name} exhausted quota (429). Trying fallback model if available...")
+                        break
+                    safe_err = self._sanitize_error_message(e)
+                    logger.error(f"Gemini API error (code={e.code}): {safe_err}")
+                    raise RuntimeError(f"Gemini API error (code={e.code}): {safe_err}") from None
+                except Exception as e:
+                    if attempt < max_retries - 1 and ("connect" in str(e).lower() or "timeout" in str(e).lower()):
+                        backoff = 2.0 * (attempt + 1)
+                        logger.warning(f"Gemini transient connection error, retrying in {backoff}s...")
+                        time.sleep(backoff)
+                        continue
+                    safe_err = self._sanitize_error_message(e)
+                    logger.error(f"Gemini request failure: {safe_err}")
+                    raise RuntimeError(f"Gemini request failure: {safe_err}") from None
+            if success:
+                break
+
+        if response is None:
+            raise RuntimeError("All configured Gemini models exhausted quota or failed.")
 
         latency_ms = max(0.0, (time.perf_counter() - t_start) * 1000.0)
 

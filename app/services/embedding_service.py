@@ -183,6 +183,55 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
         return self.embed_texts([query], document_id=document_id)
 
 
+class GeminiEmbeddingProvider(BaseEmbeddingProvider):
+    """
+    Google Gemini Embedding Provider using official google-genai SDK.
+    Default model: text-embedding-004 (768 dimensions).
+    """
+    DEFAULT_MODEL = "gemini-embedding-2"
+
+    def __init__(self, api_key: str, model: str = "gemini-embedding-2"):
+        if not api_key:
+            raise ValueError("Gemini API key is required for GeminiEmbeddingProvider.")
+        self.provider_name = "gemini"
+        self.api_key = api_key
+        self.model = model or self.DEFAULT_MODEL
+        self.model_name = self.model
+        from google.genai import Client
+        self._client = Client(api_key=self.api_key)
+        self.last_tokens: Optional[int] = None
+
+    def embed_texts(self, texts: List[str], document_id: Optional[str] = None) -> np.ndarray:
+        if not texts:
+            return np.empty((0, 3072), dtype=np.float32)
+        try:
+            embeddings = []
+            for t in texts:
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        response = self._client.models.embed_content(
+                            model=self.model,
+                            contents=t
+                        )
+                        embeddings.append(response.embeddings[0].values)
+                        break
+                    except Exception as embed_err:
+                        if "429" in str(embed_err) and attempt < max_retries - 1:
+                            backoff = 3.0 * (attempt + 1)
+                            logger.warning(f"Embedding 429 rate limit, sleeping {backoff}s...")
+                            time.sleep(backoff)
+                            continue
+                        raise
+            return np.array(embeddings, dtype=np.float32)
+        except Exception as e:
+            logger.error(f"Gemini embedding generation error: {e}")
+            raise RuntimeError(f"Gemini embedding error: {e}") from None
+
+    def embed_query(self, query: str, document_id: Optional[str] = None) -> np.ndarray:
+        return self.embed_texts([query], document_id=document_id)
+
+
 class EmbeddingService:
     def __init__(self):
         self.provider = self._resolve_provider()
@@ -201,7 +250,14 @@ class EmbeddingService:
         provider_name = settings.EMBEDDING_PROVIDER.lower()
         logger.info(f"Initializing embedding provider: {provider_name}")
 
-        if provider_name == "fastembed":
+        if provider_name == "gemini":
+            api_key = settings.EMBEDDING_API_KEY or settings.LLM_API_KEY
+            if not api_key:
+                logger.warning("API key missing for Gemini embeddings. Falling back to TF-IDF.")
+                return TFIDFEmbeddingProvider()
+            model = settings.EMBEDDING_MODEL if settings.EMBEDDING_MODEL and "gemini" in settings.EMBEDDING_MODEL else GeminiEmbeddingProvider.DEFAULT_MODEL
+            return GeminiEmbeddingProvider(api_key=api_key, model=model)
+        elif provider_name == "fastembed":
             model = settings.EMBEDDING_MODEL if settings.EMBEDDING_MODEL and settings.EMBEDDING_MODEL != "text-embedding-3-small" else FastEmbedProvider.DEFAULT_MODEL
             return FastEmbedProvider(model_name=model)
         elif provider_name == "openai":

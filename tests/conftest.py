@@ -12,16 +12,20 @@ from app.services.llm_service import MockLLMProvider
 from app.main import app_state
 
 @pytest.fixture(autouse=True)
-def default_mock_llm(request, monkeypatch):
+def default_test_environment(request, monkeypatch):
     """
     Ensures unit and integration tests run deterministically with Mock LLM
-    unless a test explicitly marks itself with @pytest.mark.no_mock_llm or LIVE_GEMINI_TEST=1.
+    and standard test thresholds unless explicitly overridden.
     """
+    monkeypatch.setattr(settings, "SIMILARITY_THRESHOLD", 0.10)
+    monkeypatch.setattr(settings, "RELEVANCE_CONFIDENCE_THRESHOLD", 0.35)
+    monkeypatch.setattr(settings, "MIN_CONTENT_WORD_OVERLAP", 0.35)
+
     if os.environ.get("LIVE_GEMINI_TEST") == "1" or request.node.get_closest_marker("no_mock_llm"):
         yield
         return
 
-    from app.services.llm_service import LLMService
+    from app.services.llm_service import LLMService, MockLLMProvider
     monkeypatch.setattr(LLMService, "_resolve_provider", lambda self: MockLLMProvider())
 
     if "llm_service" in app_state:
