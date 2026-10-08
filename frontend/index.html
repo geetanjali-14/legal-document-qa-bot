@@ -8,253 +8,263 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="app-container legal-workspace">
-    <header class="app-header legal-header">
+  <div class="app-container">
+    <!-- Main Top Navigation -->
+    <header class="app-header">
       <div class="brand-lockup">
+        <button type="button" id="sidebarToggle" class="sidebar-toggle" aria-label="Toggle navigation menu" aria-expanded="false">☰</button>
         <div class="brand">
-          <span class="icon" aria-hidden="true">§</span>
+          <span class="brand-icon" aria-hidden="true">§</span>
           <div class="brand-copy">
-            <h1>LEGAL DOCUMENT QA</h1>
+            <h1>Legal Document Q&A</h1>
           </div>
         </div>
       </div>
-      <nav class="top-nav" aria-label="Workspace">
-        <a class="top-nav-link active" href="#qaWorkspace">QA Chat</a>
-        <a class="top-nav-link" href="#documentsList">Evidence Corpus</a>
+      <nav class="top-nav" aria-label="Views">
+        <button type="button" class="top-nav-btn active" id="navChatBtn">Chat</button>
+        <button type="button" class="top-nav-btn" id="navDocsBtn">Documents (<span id="topNavDocCount">0</span>)</button>
       </nav>
-      <button type="button" id="sidebarToggle" class="sidebar-toggle" aria-label="Open evidence corpus" aria-expanded="false">☰</button>
-      <div class="header-context">
-        <span class="context-mark" aria-hidden="true"></span>
-        <span>ACTIVE MATTER</span>
-        <strong id="activeDocName">No document selected</strong>
-      </div>
     </header>
 
-    <div class="main-layout legal-layout">
-      <aside class="sidebar legal-sidebar" aria-label="Evidence corpus">
-        <button type="button" id="uploadOpenBtn" class="upload-action">
-          <span aria-hidden="true">↑</span>
-          <span>Upload Document</span>
-        </button>
+    <div class="main-layout">
+      <!-- Modern AI Chat Sidebar -->
+      <aside class="sidebar" aria-label="Conversations and documents sidebar">
+        <div class="sidebar-top">
+          <button type="button" id="newChatBtn" class="new-chat-action">
+            <span class="btn-icon" aria-hidden="true">+</span>
+            <span>New Chat</span>
+          </button>
+        </div>
 
-        <section class="accordion-card documents-card" id="docsCard">
-          <div class="section-title accordion-header" id="docsHeader" role="button" tabindex="0" aria-expanded="false" aria-controls="docsBody">
-            <div>
-              <span class="section-kicker">EVIDENCE CORPUS</span>
-              <h2>Indexed documents <span class="accordion-arrow">▾</span></h2>
-            </div>
-            <div class="section-actions" onclick="event.stopPropagation()">
-              <button id="refreshDocsBtn" class="icon-btn" type="button" title="Refresh documents" aria-label="Refresh documents">↻</button>
-            </div>
+        <section class="sidebar-section chats-section" aria-label="Your chats">
+          <div class="sidebar-section-header">
+            <span class="sidebar-section-title">YOUR CHATS</span>
           </div>
-          <div class="accordion-body" id="docsBody" hidden>
-            <div class="corpus-count"><strong id="indexedCount">0</strong><span>Indexed</span></div>
-            <div id="documentsList" class="documents-list">
-              <p class="empty-text">No documents in this corpus yet.</p>
-            </div>
+          <div id="conversationsList" class="conversations-list">
+            <p class="empty-text">No chats yet.</p>
           </div>
         </section>
 
-        <section class="accordion-card conversations-card" id="convsCard">
-          <div class="section-title accordion-header" id="convsHeader" role="button" tabindex="0" aria-expanded="false" aria-controls="convsBody">
-            <div>
-              <span class="section-kicker">CONSULTATION THREADS</span>
-              <h2>Conversations <span class="accordion-arrow">▾</span></h2>
-            </div>
-            <div class="section-actions" onclick="event.stopPropagation()">
-              <button id="newChatBtn" class="icon-btn" type="button" title="New conversation" aria-label="Start new conversation">+</button>
-            </div>
+        <section class="sidebar-section documents-nav-section" aria-label="Documents management">
+          <div class="sidebar-section-header">
+            <span class="sidebar-section-title">DOCUMENTS</span>
           </div>
-          <div class="accordion-body" id="convsBody" hidden>
-            <div id="conversationsList" class="conversations-list">
-              <p class="empty-text">No active threads.</p>
-            </div>
+          <div class="sidebar-doc-actions">
+            <button type="button" id="uploadOpenBtn" class="sidebar-action-btn">
+              <span class="btn-icon" aria-hidden="true">↑</span>
+              <span>Upload Document</span>
+            </button>
+            <button type="button" id="viewAllDocsBtn" class="sidebar-action-btn secondary">
+              <span class="btn-icon" aria-hidden="true">▤</span>
+              <span>Manage Documents</span>
+            </button>
           </div>
         </section>
-
-        <div id="uploadStatus" class="status-box hidden" role="status" aria-live="polite"></div>
 
         <footer class="sidebar-footer">
-          <div class="footer-guidance">
-            <span class="footer-rule" aria-hidden="true"></span>
-            <span>Evidence is limited to the selected document and returned citations.</span>
+          <div class="footer-disclaimer">
+            <span>Informational legal reference only. Not formal legal advice.</span>
           </div>
-          <div class="session-indicator"><span></span>Local research workspace</div>
         </footer>
       </aside>
-      <button type="button" class="sidebar-backdrop" id="sidebarBackdrop" aria-label="Close evidence corpus" hidden></button>
 
-      <main class="chat-section legal-chat-section" id="qaWorkspace">
-        <div class="active-doc-banner" id="activeDocBanner">
-          <div class="doc-info">
-            <span class="label">CURRENT CONTEXT</span>
-            <span id="activeDocStats" class="badge">None selected</span>
+      <button type="button" class="sidebar-backdrop" id="sidebarBackdrop" aria-label="Close sidebar" hidden></button>
+
+      <!-- VIEW 1: Main Chat Workspace -->
+      <main class="chat-section" id="qaWorkspace">
+        <!-- In-Chat Document Context Selector -->
+        <div class="chat-header-bar">
+          <div class="doc-context-control">
+            <span class="context-label">Context:</span>
+            <div class="doc-dropdown-wrapper">
+              <button type="button" id="docSelectorBtn" class="doc-selector-trigger" aria-haspopup="true" aria-expanded="false">
+                <span class="doc-icon" aria-hidden="true">📄</span>
+                <span id="activeDocName" class="selected-doc-label">No document selected</span>
+                <span class="chevron" aria-hidden="true">▾</span>
+              </button>
+              <div id="docSelectorMenu" class="doc-dropdown-menu" hidden>
+                <div class="doc-dropdown-search">
+                  <input type="text" id="docFilterInput" placeholder="Filter documents..." aria-label="Filter documents" />
+                </div>
+                <div class="doc-dropdown-options" id="docDropdownOptions">
+                  <button type="button" class="doc-dropdown-option active" data-doc-id="">
+                    <span class="option-title">No document</span>
+                    <span class="option-desc">General legal inquiry</span>
+                  </button>
+                </div>
+                <div class="doc-dropdown-footer">
+                  <button type="button" id="dropdownUploadBtn" class="link-btn">+ Upload new document</button>
+                </div>
+              </div>
+            </div>
+            <button type="button" id="clearDocContextBtn" class="icon-clear-btn" title="Remove document context" aria-label="Remove document context" hidden>×</button>
           </div>
-          <div class="banner-actions">
-            <button type="button" id="viewActiveDocBtn" class="secondary-action" disabled>View PDF</button>
-            <div class="legal-safety-note">Responses are limited to retrieved document context. Not legal advice.</div>
+
+          <div class="chat-header-actions">
+            <button type="button" id="viewActiveDocBtn" class="secondary-btn" disabled>View PDF</button>
           </div>
         </div>
 
+        <!-- Chat Conversation Messages -->
         <div class="chat-messages" id="chatMessages" aria-live="polite">
-          <section class="empty-workspace" id="emptyState" aria-labelledby="emptyHeading">
-            <div class="empty-copy">
-              <span class="intro-kicker">DOCUMENT INQUIRY</span>
-              <h2 id="emptyHeading">Ask questions grounded in<br><em id="emptyDocName">a selected document</em></h2>
-              <p>Review the selected document through focused questions. Responses are generated from retrieved passages and include source excerpts when available.</p>
+          <section class="empty-workspace" id="emptyState">
+            <div class="empty-greeting">
+              <h2 id="emptyHeading">New Chat</h2>
+              <p id="emptySubheading">Ask anything or select a document to ask questions about a specific file.</p>
             </div>
 
-            <section class="readiness-panel" aria-label="Document readiness">
-              <div class="readiness-heading">
-                <div>
-                  <span class="section-kicker">CORPUS CALIBRATION</span>
-                  <h3>Document readiness</h3>
-                </div>
-                <span class="readiness-state" id="readinessStatus">Awaiting document</span>
-              </div>
-              <div class="readiness-details" id="readinessDetails">Select an indexed document to view its available page and chunk counts.</div>
-              <div class="readiness-metrics">
-                <div><span>PDF pages</span><strong id="readinessPages">—</strong></div>
-                <div><span>Indexed chunks</span><strong id="readinessChunks">—</strong></div>
-                <div><span>Context source</span><strong>Selected document</strong></div>
-              </div>
-            </section>
+            <div class="empty-doc-card" id="emptyDocCard" hidden>
+              <div class="doc-card-badge">📄 Selected Document</div>
+              <strong id="emptyDocTitle" class="doc-card-title">—</strong>
+              <span id="emptyDocMeta" class="doc-card-meta">—</span>
+            </div>
 
-            <section class="inquiry-starters" aria-labelledby="inquiryHeading">
-              <div class="starter-heading">
-                <span class="section-kicker">INQUIRY STARTERS</span>
-                <h3 id="inquiryHeading">Begin with a question</h3>
+            <!-- Dynamic Document-Aware Suggested Questions -->
+            <div class="suggested-questions-wrapper" id="suggestedQuestionsWrapper">
+              <span class="suggestions-label">SUGGESTED QUESTIONS</span>
+              <div class="suggested-questions-grid" id="suggestedQuestionsGrid">
+                <!-- Dynamically rendered by app.js -->
               </div>
-              <div class="starter-list">
-                <button type="button" class="question-suggestion" data-question="What obligations does this document describe?" disabled>What obligations does this document describe?</button>
-                <button type="button" class="question-suggestion" data-question="What dates or notice periods are stated?" disabled>What dates or notice periods are stated?</button>
-                <button type="button" class="question-suggestion" data-question="Which parties and responsibilities are identified?" disabled>Which parties and responsibilities are identified?</button>
-              </div>
-            </section>
+            </div>
           </section>
         </div>
 
+        <!-- Chat Input Footer -->
         <div class="chat-input-container">
           <form id="chatForm">
-            <label class="input-context" for="questionInput"><span aria-hidden="true">▤</span><span id="inputDocName">Document context unavailable</span></label>
             <div class="input-compose">
-              <textarea id="questionInput" placeholder="Select a document before asking a question..." disabled autocomplete="off" rows="2" maxlength="1500" aria-label="Ask a question about the selected legal document"></textarea>
-              <button type="submit" id="sendBtn" disabled aria-label="Send question"><span>Ask</span></button>
+              <textarea id="questionInput" placeholder="Ask a legal question or inquiry..." autocomplete="off" rows="2" maxlength="1500" aria-label="Ask a legal question"></textarea>
+              <button type="submit" id="sendBtn" aria-label="Send question">
+                <span>Ask</span>
+              </button>
             </div>
           </form>
           <div class="input-footer">
+            <span class="input-hint" id="inputHint">Press Enter to send, Shift+Enter for new line</span>
             <span id="charCount">0/1500</span>
-            <span>Answers reflect retrieved passages, not a substitute for legal counsel.</span>
           </div>
         </div>
       </main>
 
-      <!-- Evidence Corpus Search & Exploration View (Navbar View) -->
-      <section class="corpus-view" id="corpusView" hidden aria-label="Evidence Corpus Search">
-        <div class="corpus-view-header">
-          <div>
-            <span class="section-kicker">ENTERPRISE REPOSITORY</span>
-            <h2>Evidence Corpus Search</h2>
-            <p class="subtitle">Search retrieved passages and inspect indexed evidentiary chunks across your repository.</p>
+      <!-- VIEW 2: Dedicated "Your Documents" Management Screen -->
+      <section class="documents-view" id="documentsView" hidden aria-label="Your Documents">
+        <div class="docs-view-header">
+          <div class="docs-view-title-group">
+            <h2>Your Documents</h2>
+            <p class="subtitle">Upload and manage documents to review clauses and ask questions.</p>
           </div>
-          <button type="button" class="secondary-action" id="closeCorpusViewBtn">Back to QA Chat</button>
+          <div class="docs-view-actions">
+            <button type="button" id="docsViewUploadBtn" class="primary-btn">
+              <span aria-hidden="true">+</span> Upload Document
+            </button>
+            <button type="button" id="backToChatBtn" class="secondary-btn">
+              ← Back to Chat
+            </button>
+          </div>
         </div>
-        <div class="corpus-search-bar">
-          <input type="text" id="corpusSearchInput" placeholder="Search across evidentiary passages and clauses..." aria-label="Search corpus evidence" />
-          <button type="button" id="corpusSearchBtn" class="primary-btn">Search</button>
+
+        <div class="docs-view-filter">
+          <input type="text" id="docsViewSearchInput" placeholder="Search your documents..." aria-label="Search uploaded documents" />
         </div>
-        <div class="corpus-results" id="corpusResults">
-          <p class="empty-text">Enter a query above to search verified evidentiary chunks.</p>
+
+        <div class="documents-grid" id="documentsGrid">
+          <!-- Rendered dynamically by app.js -->
         </div>
       </section>
 
-      <aside class="source-inspector" id="sourceInspector" hidden aria-label="Source context inspection" aria-hidden="true">
+      <!-- In-Chat Source Inspector Drawer (Preserved On-Demand) -->
+      <aside class="source-inspector" id="sourceInspector" hidden aria-label="Source citation inspection" aria-hidden="true">
         <div class="inspector-header">
           <div>
-            <span class="section-kicker">EVIDENCE RECORD</span>
-            <h2>Source context</h2>
+            <span class="inspector-kicker">SOURCE EVIDENCE</span>
+            <h2>Document Excerpt</h2>
           </div>
-          <button id="sourceInspectorClose" class="icon-btn" type="button" aria-label="Close source context">×</button>
+          <button id="sourceInspectorClose" class="icon-btn" type="button" aria-label="Close source excerpt">×</button>
         </div>
         <div class="inspector-document">
-          <span class="document-glyph" aria-hidden="true">▤</span>
-          <div><strong id="sourceDocumentName">Source document</strong><span id="sourceLocation">Citation details unavailable</span></div>
+          <span class="document-glyph" aria-hidden="true">📄</span>
+          <div>
+            <strong id="sourceDocumentName">Document</strong>
+            <span id="sourceLocation">Citation details</span>
+          </div>
         </div>
-        <div class="source-excerpt-label">VERIFIED EXCERPT</div>
-        <blockquote id="sourceExcerpt" class="source-excerpt">Select a citation to inspect its returned excerpt.</blockquote>
-        <p class="inspector-note">This view contains the excerpt supplied with the citation.</p>
+        <div class="source-excerpt-label">EXCERPT FROM DOCUMENT</div>
+        <blockquote id="sourceExcerpt" class="source-excerpt">Select a citation to inspect its excerpt.</blockquote>
       </aside>
     </div>
 
-    <!-- Upload Dialog -->
-    <dialog class="upload-dialog" id="uploadDialog" aria-labelledby="uploadDialogTitle">
-      <form method="dialog" class="dialog-chrome"><button type="submit" class="icon-btn" aria-label="Close upload dialog">×</button></form>
-      <div class="dialog-content">
-        <span class="section-kicker">EVIDENCE INTAKE</span>
-        <h2 id="uploadDialogTitle">Upload a legal document</h2>
-        <p>Upload a PDF or image document (PNG, JPG, JPEG, WEBP, TIFF) to index its contents.</p>
+    <!-- Centralized Toast Notification -->
+    <div id="uploadStatus" class="status-box toast hidden" role="status" aria-live="polite"></div>
+
+    <!-- Standardized Upload Modal -->
+    <dialog class="app-dialog upload-dialog" id="uploadDialog" aria-labelledby="uploadDialogTitle">
+      <div class="dialog-header">
+        <h2 id="uploadDialogTitle">Upload Document</h2>
+        <button type="button" class="icon-btn" id="uploadDialogCloseBtn" aria-label="Close upload dialog">×</button>
+      </div>
+      <div class="dialog-body">
+        <p class="dialog-desc">Upload a PDF or document image (PNG, JPG, WEBP, TIFF) to ask questions about it.</p>
         <label class="drop-zone" id="dropZone" for="fileInput">
-          <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.webp,.tiff" aria-label="Choose a legal document or image" />
+          <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.webp,.tiff" aria-label="Choose a file to upload" />
           <span class="upload-icon" aria-hidden="true">↑</span>
-          <strong>Drop your legal document here</strong>
-          <span>or browse files on this device</span>
-          <small>PDF and images (PNG, JPG, WEBP, TIFF)</small>
+          <strong>Drop your document here</strong>
+          <span>or browse files on your device</span>
+          <small>PDF contracts, agreements, scanned documents, and images</small>
         </label>
-        <div class="dialog-footnote"><span aria-hidden="true">i</span>Document processing runs through the existing indexing and OCR service.</div>
       </div>
     </dialog>
 
-    <!-- PDF & Document Centered Modal -->
-    <dialog class="pdf-modal" id="pdfModal" aria-labelledby="pdfModalTitle">
-      <div class="modal-chrome">
-        <div class="modal-title-group">
-          <span class="section-kicker">DOCUMENT VIEWER</span>
-          <h2 id="pdfModalTitle">Document Preview</h2>
-        </div>
-        <button type="button" class="icon-btn modal-close-btn" id="pdfModalCloseBtn" aria-label="Close document viewer">×</button>
+    <!-- Standardized PDF Viewer Modal -->
+    <dialog class="app-dialog pdf-modal" id="pdfModal" aria-labelledby="pdfModalTitle">
+      <div class="dialog-header">
+        <h2 id="pdfModalTitle">Document Preview</h2>
+        <button type="button" class="icon-btn" id="pdfModalCloseBtn" aria-label="Close document preview">×</button>
       </div>
-      <div class="modal-content pdf-modal-body">
-        <iframe id="pdfFrame" src="about:blank" title="Document PDF Preview"></iframe>
+      <div class="dialog-body pdf-modal-body">
+        <iframe id="pdfFrame" src="about:blank" title="Document Preview"></iframe>
       </div>
     </dialog>
 
-    <!-- Document Switch Confirmation Dialog -->
-    <dialog class="confirm-dialog" id="docSwitchDialog" aria-labelledby="docSwitchTitle">
-      <div class="dialog-content">
-        <span class="section-kicker">CONTEXT BOUNDARY</span>
-        <h2 id="docSwitchTitle">Switch Document Context?</h2>
-        <p id="docSwitchDesc">This conversation is currently associated with <strong id="switchFromDocName">Doc A</strong>. Switching to <strong id="switchToDocName">Doc B</strong> will change the retrieval context.</p>
-        <div class="confirm-actions">
-          <button type="button" class="dialog-cancel-btn" id="switchCancelBtn">Cancel</button>
-          <button type="button" class="dialog-secondary-btn" id="switchKeepChatBtn">Switch in Current Chat</button>
-          <button type="button" class="dialog-confirm-btn" id="switchNewChatBtn">Start New Conversation</button>
-        </div>
+    <!-- Standardized Document Switch Modal -->
+    <dialog class="app-dialog confirm-dialog" id="docSwitchDialog" aria-labelledby="docSwitchTitle">
+      <div class="dialog-header">
+        <h2 id="docSwitchTitle">Switch Document?</h2>
+      </div>
+      <div class="dialog-body">
+        <p id="docSwitchDesc">This chat currently discusses <strong id="switchFromDocName">Doc A</strong>. Switching to <strong id="switchToDocName">Doc B</strong> will change the document context.</p>
+      </div>
+      <div class="dialog-footer">
+        <button type="button" class="secondary-btn" id="switchCancelBtn">Cancel</button>
+        <button type="button" class="secondary-btn" id="switchKeepChatBtn">Switch in Current Chat</button>
+        <button type="button" class="primary-btn" id="switchNewChatBtn">Start New Chat</button>
       </div>
     </dialog>
 
-    <!-- Document Delete Confirmation Dialog -->
-    <dialog class="confirm-dialog" id="docDeleteDialog" aria-labelledby="docDeleteTitle">
-      <div class="dialog-content">
-        <span class="section-kicker">PERMANENT ACTION</span>
-        <h2 id="docDeleteTitle">Delete Document?</h2>
-        <p>Are you sure you want to delete <strong id="deleteDocName">this document</strong> and all its indexed vector chunks?</p>
-        <div class="confirm-actions">
-          <button type="button" class="dialog-cancel-btn" id="deleteDocCancelBtn">Cancel</button>
-          <button type="button" class="dialog-danger-btn" id="deleteDocConfirmBtn">Delete Document</button>
-        </div>
+    <!-- Standardized Document Delete Modal -->
+    <dialog class="app-dialog confirm-dialog" id="docDeleteDialog" aria-labelledby="docDeleteTitle">
+      <div class="dialog-header">
+        <h2 id="docDeleteTitle">Delete Document</h2>
+      </div>
+      <div class="dialog-body">
+        <p>Are you sure you want to delete <strong id="deleteDocName">this document</strong>? All associated chat references will be removed.</p>
+      </div>
+      <div class="dialog-footer">
+        <button type="button" class="secondary-btn" id="deleteDocCancelBtn">Cancel</button>
+        <button type="button" class="danger-btn" id="deleteDocConfirmBtn">Delete</button>
       </div>
     </dialog>
 
-    <!-- Conversation Delete Confirmation Dialog -->
-    <dialog class="confirm-dialog" id="convDeleteDialog" aria-labelledby="convDeleteTitle">
-      <div class="dialog-content">
-        <span class="section-kicker">PERMANENT ACTION</span>
-        <h2 id="convDeleteTitle">Delete Conversation?</h2>
-        <p>Are you sure you want to delete thread <strong id="deleteConvTitle">this conversation</strong>?</p>
-        <div class="confirm-actions">
-          <button type="button" class="dialog-cancel-btn" id="deleteConvCancelBtn">Cancel</button>
-          <button type="button" class="dialog-danger-btn" id="deleteConvConfirmBtn">Delete Conversation</button>
-        </div>
+    <!-- Standardized Conversation Delete Modal -->
+    <dialog class="app-dialog confirm-dialog" id="convDeleteDialog" aria-labelledby="convDeleteTitle">
+      <div class="dialog-header">
+        <h2 id="convDeleteTitle">Delete Chat</h2>
+      </div>
+      <div class="dialog-body">
+        <p>Are you sure you want to delete <strong id="deleteConvTitle">this chat</strong>?</p>
+      </div>
+      <div class="dialog-footer">
+        <button type="button" class="secondary-btn" id="deleteConvCancelBtn">Cancel</button>
+        <button type="button" class="danger-btn" id="deleteConvConfirmBtn">Delete</button>
       </div>
     </dialog>
   </div>

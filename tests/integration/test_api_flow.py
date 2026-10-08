@@ -99,3 +99,59 @@ def test_end_to_end_legal_rag_flow(client):
     # 4. Clean up / Delete document
     del_resp = client.delete(f"/api/documents/{doc_id}")
     assert del_resp.status_code == 200
+
+
+def test_multi_turn_conversation_api_flow(client):
+    """
+    Integration test verifying real /api/chat endpoint with multi-turn conversation:
+    Q1: Notice period for early termination?
+    Q2: Who can initiate it?
+    Q3: What happens to indemnification obligations after that occurs?
+    """
+    pdf_path = Path("documents/synthetic_contract.pdf")
+    assert pdf_path.exists(), "Synthetic test contract must exist."
+
+    with open(pdf_path, "rb") as f:
+        upload_resp = client.post(
+            "/api/documents/upload",
+            files={"file": ("synthetic_contract.pdf", f, "application/pdf")}
+        )
+    assert upload_resp.status_code == 201
+    doc_id = upload_resp.json()["data"]["document_id"]
+
+    try:
+        # Create conversation
+        conv_resp = client.post("/api/conversations", json={"document_id": doc_id, "title": "Multi-Turn Test"})
+        assert conv_resp.status_code == 201
+        conv_id = conv_resp.json()["data"]["conversation_id"]
+
+        # Turn 1: Notice period
+        q1 = "What is the notice period for early termination?"
+        r1 = client.post("/api/chat", json={"document_id": doc_id, "conversation_id": conv_id, "question": q1})
+        assert r1.status_code == 200
+        d1 = r1.json()["data"]
+        assert len(d1["sources"]) > 0
+        assert "30 days" in d1["answer"].lower()
+
+        # Turn 2: Follow-up pronoun resolution
+        q2 = "Who can initiate it?"
+        r2 = client.post("/api/chat", json={"document_id": doc_id, "conversation_id": conv_id, "question": q2})
+        assert r2.status_code == 200
+        d2 = r2.json()["data"]
+        assert d2["audit_trace"]["context_rewritten_query"] is not None
+        assert "early termination" in d2["audit_trace"]["context_rewritten_query"].lower()
+        assert len(d2["sources"]) > 0
+
+        # Turn 3: Multi-hop event reference
+        q3 = "What happens to indemnification obligations after that occurs?"
+        r3 = client.post("/api/chat", json={"document_id": doc_id, "conversation_id": conv_id, "question": q3})
+        assert r3.status_code == 200
+        d3 = r3.json()["data"]
+        assert d3["audit_trace"]["context_rewritten_query"] is not None
+        assert "early termination" in d3["audit_trace"]["context_rewritten_query"].lower()
+        assert len(d3["sources"]) > 0
+
+    finally:
+        # Guaranteed cleanup
+        client.delete(f"/api/documents/{doc_id}")
+

@@ -48,3 +48,20 @@ class ConversationResponse(BaseModel):
 
 class ConversationDetailResponse(ConversationResponse):
     messages: List[MessageResponse] = Field(default_factory=list)
+
+
+class ConversationContextState(BaseModel):
+    """
+    Lightweight structured representation of multi-turn conversation state (Phase 1).
+    Tracks active legal concepts, parties, sections, and events without external dependencies.
+    """
+    active_document: Optional[str] = None
+    active_topic: Optional[str] = None
+    active_clause: Optional[str] = None
+    active_parties: List[str] = Field(default_factory=list)
+    active_entities: List[str] = Field(default_factory=list)
+    active_definitions: List[str] = Field(default_factory=list)
+    active_events: List[str] = Field(default_factory=list)
+    last_resolved_query: Optional[str] = None
+    conversation_summary: Optional[str] = None
+

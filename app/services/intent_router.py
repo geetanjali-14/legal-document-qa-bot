@@ -64,6 +64,7 @@ STRUCTURE_PATTERNS = [
 COMPARE_PATTERNS = [
     r"\bcompare\s+(?:both|the|these)?\s*documents\b",
     r"\bcompare\s+(?:document|contract)\s+[A-Za-z0-9_-]+\s+(?:and|with|to)\s+[A-Za-z0-9_-]+\b",
+    r"\bcompare\b.*\b(?:between|and|with|versus|vs)\b",
     r"\bdifferences\s+between\s+(?:the\s+)?(?:two|both|documents)\b",
     r"\bcompare\s+the\s+termination\s+terms\b",
 ]

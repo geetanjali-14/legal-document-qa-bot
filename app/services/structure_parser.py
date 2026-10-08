@@ -44,21 +44,26 @@ class StructureParser:
     )
 
     # Defined terms patterns:
-    # "Term" means / "Term" shall mean / "Term" refers to / 'Term' has the meaning
+    # "Term" means / "Term" shall mean / "Term" refers to / 'Term' has the meaning / "Term" includes / (the "Term")
     DEF_TERM_PATTERN = re.compile(
-        r'["“\']([^"“”\']{2,60})["”\']\s+(?:means|shall\s+mean|refers\s+to|has\s+the\s+meaning|is\s+defined\s+as)\s+(.+?)(?:\.|$)',
+        r'["“\']([^"“”\']{2,60})["”\']\s+(?:means|shall\s+mean|refers\s+to|has\s+the\s+meaning|is\s+defined\s+as|includes)\s+(.+?)(?:\.|$)',
         re.IGNORECASE
     )
     # Term: A definition sentence in a defined terms section
     DEF_COLON_PATTERN = re.compile(
         r'^["“\']?([A-Z][A-Za-z0-9\s]{2,50})["”\']?\s*:\s*(.+)$'
     )
+    # Parenthetical definition e.g. (hereinafter referred to as "Company") or ("Effective Date")
+    DEF_PAREN_PATTERN = re.compile(
+        r'\((?:hereinafter\s+(?:referred\s+to\s+as\s+)?|the\s+)?["“\']([^"“”\']{2,50})["”\']\)',
+        re.IGNORECASE
+    )
 
     # Cross-reference patterns:
-    # subject to Section 12.4 / pursuant to Article 7 / as described in Clause 8.2(b)
+    # subject to Section 12.4 / pursuant to Article 7 / as described in Clause 8.2(b) / as defined in Section 1
     CROSS_REF_PATTERN = re.compile(
-        r'(?:(?:subject\s+to|pursuant\s+to|in\s+accordance\s+with|except\s+as\s+provided\s+in|as\s+set\s+forth\s+in|as\s+described\s+in|under)\s+)'
-        r'((?:Section|Article|Clause|Schedule|Exhibit)\s+[0-9IVXLCDM]+(?:\.[0-9]+)*(?:\([a-z0-9]+\))*)',
+        r'(?:(?:subject\s+to|pursuant\s+to|in\s+accordance\s+with|except\s+as\s+provided\s+in|as\s+set\s+forth\s+in|as\s+described\s+in|as\s+defined\s+in|specified\s+in|set\s+out\s+in|under)\s+)'
+        r'((?:Section|Article|Clause|Schedule|Exhibit|Annexure)\s+[0-9IVXLCDM]+(?:\.[0-9]+)*(?:\([a-z0-9]+\))*)',
         re.IGNORECASE
     )
 
@@ -285,6 +290,21 @@ class StructureParser:
                         page_number=page_num,
                         raw_snippet=line[:250]
                     )
+
+        # Also search for parenthetical definitions e.g. (the "Agreement")
+        for m_par in self.DEF_PAREN_PATTERN.finditer(text):
+            p_term = m_par.group(1).strip()
+            clean_p = p_term.lower()
+            if len(clean_p) >= 3 and clean_p not in definitions:
+                start_c = max(0, m_par.start() - 60)
+                end_c = min(len(text), m_par.end() + 30)
+                surrounding = text[start_c:end_c].replace("\n", " ").strip()
+                definitions[clean_p] = LegalDefinition(
+                    term=p_term,
+                    definition=f"Defined entity or concept in context: {surrounding}",
+                    page_number=page_num,
+                    raw_snippet=surrounding[:250]
+                )
 
     def _extract_cross_references(
         self,

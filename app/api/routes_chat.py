@@ -138,14 +138,17 @@ async def ask_question(
     llm_service: LLMService = services["llm"]
     citation_service: CitationService = services["citation"]
 
-    # 4. Verify document exists
-    doc = doc_service.get_document(request.document_id)
-    if not doc:
-        logger.warning(f"[{request_id}] Document with ID {request.document_id} not found.")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with ID {request.document_id} was not found."
-        )
+    # 4. Verify document exists if document_id provided
+    doc = None
+    has_document = bool(request.document_id and request.document_id.strip() and request.document_id.lower() not in ("none", "null"))
+    if has_document:
+        doc = doc_service.get_document(request.document_id)
+        if not doc:
+            logger.warning(f"[{request_id}] Document with ID {request.document_id} not found.")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document with ID {request.document_id} was not found."
+            )
 
     conv_service = services.get("conversation")
     active_conversation_id = None
@@ -161,7 +164,7 @@ async def ask_question(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail=f"Conversation with ID '{request.conversation_id}' was not found."
                     )
-                if request.document_id not in (existing_conv.document_ids or []):
+                if has_document and request.document_id not in (existing_conv.document_ids or []):
                     logger.warning(
                         f"[{request_id}] Mismatched document and conversation: conversation {request.conversation_id} "
                         f"belongs to {existing_conv.document_ids}, not '{request.document_id}'."
@@ -178,7 +181,7 @@ async def ask_question(
 
             conv_resp = conv_service.ensure_conversation_exists(
                 conversation_id=request.conversation_id,
-                document_id=request.document_id
+                document_id=request.document_id if has_document else None
             )
             active_conversation_id = conv_resp.conversation_id
             # Retrieve bounded history BEFORE appending current user message
@@ -207,13 +210,85 @@ async def ask_question(
     def rollback_if_failed():
         if conv_service and active_conversation_id and is_newly_created_conv:
             try:
-                conv_service.delete_conversation(active_conversation_id, request.document_id)
+                conv_service.delete_conversation(active_conversation_id, request.document_id or "")
                 logger.info(f"[{request_id}] Rolled back newly created conversation {active_conversation_id} due to request failure.")
             except Exception as rb_err:
                 logger.warning(f"[{request_id}] Failed to rollback conversation: {rb_err}")
 
     # Fallback to client-provided history if no persistent conversation history exists
     effective_history = bounded_history if bounded_history else (request.history or [])
+
+    # If no document is selected, handle general legal Q&A inquiry directly
+    if not has_document:
+        try:
+            llm_res = llm_service.generate_answer(
+                question=request.question,
+                context_chunks=[],
+                history=effective_history
+            )
+            general_answer = llm_res.content
+            total_latency_ms = max(0.0, (time.perf_counter() - t_request_start) * 1000.0)
+            telemetry = ChatTelemetry(
+                request_id=request_id,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                document_id="none",
+                status="success",
+                retrieval_latency_ms=0.0,
+                embedding_latency_ms=0.0,
+                llm_latency_ms=llm_res.latency_ms,
+                total_latency_ms=round(total_latency_ms, 2),
+                llm_provider=llm_res.provider,
+                llm_model=llm_res.model,
+                input_tokens=llm_res.input_tokens,
+                output_tokens=llm_res.output_tokens,
+                total_tokens=llm_res.total_tokens,
+                token_usage_type=llm_res.token_usage_type,
+                estimated_input_tokens=llm_res.estimated_input_tokens,
+                estimated_output_tokens=llm_res.estimated_output_tokens,
+                estimated_total_tokens=llm_res.estimated_total_tokens,
+                estimation_method=llm_res.estimation_method,
+                cost_estimate_usd=pricing_registry.calculate_cost(
+                    llm_res.provider,
+                    llm_res.model,
+                    llm_res.input_tokens or llm_res.estimated_input_tokens or 0,
+                    llm_res.output_tokens or llm_res.estimated_output_tokens or 0
+                )
+            )
+            record_chat_telemetry(telemetry)
+
+            if conv_service and active_conversation_id:
+                try:
+                    conv_service.add_message(
+                        conversation_id=active_conversation_id,
+                        role="assistant",
+                        content=general_answer,
+                        intent="general_legal_qa",
+                        evidence_state="general_qa",
+                        sources=[],
+                        telemetry=telemetry
+                    )
+                except Exception as e:
+                    logger.error(f"[{request_id}] Failed to persist general assistant response message: {str(e)}")
+
+            return ApiResponse(
+                success=True,
+                message="Question answered",
+                data=ChatResponse(
+                    answer=general_answer,
+                    sources=[],
+                    confidence="supported",
+                    request_id=request_id,
+                    telemetry=telemetry,
+                    conversation_id=active_conversation_id
+                ).model_dump()
+            )
+        except Exception as gen_err:
+            rollback_if_failed()
+            logger.error(f"[{request_id}] Error in general legal chat: {str(gen_err)}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An internal error occurred while processing your legal query."
+            )
 
     orchestrator = services.get("orchestrator")
     from app.services.query_service import decompose_query, clean_subquery_topic

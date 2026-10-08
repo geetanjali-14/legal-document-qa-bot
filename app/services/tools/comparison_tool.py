@@ -102,9 +102,9 @@ class MultiDocumentComparisonTool:
                 ComparisonRow(
                     topic=topic,
                     status=status,
-                    doc_a_evidence=text_a[:350],
+                    doc_a_evidence=text_a[:1000],
                     doc_a_citation=cite_a,
-                    doc_b_evidence=text_b[:350],
+                    doc_b_evidence=text_b[:1000],
                     doc_b_citation=cite_b
                 )
             )

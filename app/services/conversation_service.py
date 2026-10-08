@@ -102,30 +102,31 @@ class ConversationService:
     def ensure_conversation_exists(
         self,
         conversation_id: Optional[str],
-        document_id: str,
+        document_id: Optional[str] = None,
         title: Optional[str] = None
     ) -> ConversationResponse:
         """
         Validates provided conversation_id or automatically creates a new conversation
-        bound to document_id if conversation_id is None.
+        bound to document_id (if provided) if conversation_id is None.
         If existing conversation does not contain document_id, appends it.
         """
         if conversation_id:
             conv = self.repository.get_conversation(conversation_id)
             if not conv:
                 raise ValueError(f"Conversation with ID '{conversation_id}' was not found.")
-            # Ensure document_id is registered in document_ids
-            doc_ids = list(conv.document_ids or [])
-            if document_id not in doc_ids:
-                doc_ids.append(document_id)
-                self.repository.update_conversation(conversation_id, document_ids=doc_ids)
-                conv.document_ids = doc_ids
+            # Ensure document_id is registered in document_ids if provided
+            if document_id:
+                doc_ids = list(conv.document_ids or [])
+                if document_id not in doc_ids:
+                    doc_ids.append(document_id)
+                    self.repository.update_conversation(conversation_id, document_ids=doc_ids)
+                    conv.document_ids = doc_ids
             return self._to_conversation_response(conv, message_count=len(conv.messages))
 
         # Create new conversation automatically
         return self.create_conversation(
             document_id=document_id,
-            title=title or f"Consultation for {document_id}"
+            title=title or (f"Consultation for {document_id}" if document_id else "General Consultation")
         )
 
     def get_bounded_history(
