@@ -1,5 +1,5 @@
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from app.core.telemetry import ChatTelemetry
 
 
@@ -24,6 +24,13 @@ class ChatRequest(BaseModel):
     history: Optional[List[Message]] = Field(default_factory=list)
     top_k: Optional[int] = Field(default=None, ge=1)
     conversation_id: Optional[str] = None
+
+    @field_validator("question")
+    @classmethod
+    def validate_non_whitespace(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Question cannot be empty or contain only whitespace.")
+        return v
 
 
 class ChatResponse(BaseModel):

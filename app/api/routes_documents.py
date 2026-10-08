@@ -1,10 +1,13 @@
 from typing import List
+from pathlib import Path
+import mimetypes
 from fastapi import APIRouter, UploadFile, File, HTTPException, status, Depends
 from fastapi.responses import FileResponse
 from app.models.response import ApiResponse
 from app.models.document import DocumentMetadata
 from app.services.document_service import DocumentService
 from app.services.pdf_service import ScannedPDFError, PDFExtractionError
+from app.services.image_service import ImageExtractionError, OCRNoTextError
 from app.core.config import settings
 from app.core.errors import ResourceLimitError
 from app.core.logging import logger
@@ -22,10 +25,17 @@ async def upload_document(
     file: UploadFile = File(...),
     doc_service: DocumentService = Depends(get_document_service)
 ):
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
+    if not file.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only PDF documents are accepted."
+            detail="Filename is required."
+        )
+
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in settings.SUPPORTED_DOCUMENT_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file format: Only PDF documents are accepted, along with supported images ({', '.join(settings.SUPPORTED_DOCUMENT_EXTENSIONS)}). Unsupported format '{file_ext}'."
         )
 
     # Early rejection if content length header indicates oversized file
@@ -58,11 +68,23 @@ async def upload_document(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(se)
         )
+    except OCRNoTextError as one:
+        logger.warning(f"Image document OCR extracted no text for {file.filename}: {str(one)}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(one)
+        )
     except PDFExtractionError as pe:
         logger.warning(f"PDF extraction error for {file.filename}: {str(pe)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(pe)
+        )
+    except ImageExtractionError as ie:
+        logger.warning(f"Image processing error for {file.filename}: {str(ie)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ie)
         )
     except ValueError as ve:
         logger.warning(f"Validation error for {file.filename}: {str(ve)}")
@@ -117,15 +139,20 @@ async def get_document_file(document_id: str, doc_service: DocumentService = Dep
     if not str(file_path).startswith(str(upload_root)) or not file_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Stored PDF for document {document_id} was not found."
+            detail=f"Stored file for document {document_id} was not found."
         )
 
+    # Determine media type based on file extension
+    media_type, _ = mimetypes.guess_type(str(file_path))
+    if not media_type:
+        media_type = "application/pdf" if file_path.suffix.lower() == ".pdf" else "application/octet-stream"
+
     # Sanitize header filename to prevent header injection or unsafe characters
-    safe_download_name = doc_service.sanitize_filename(doc.original_filename or "document.pdf")
+    safe_download_name = doc_service.sanitize_filename(doc.original_filename or f"document{file_path.suffix}")
 
     return FileResponse(
         path=str(file_path),
-        media_type="application/pdf",
+        media_type=media_type,
         filename=safe_download_name,
         headers={"Content-Disposition": f"inline; filename=\"{safe_download_name}\""}
     )

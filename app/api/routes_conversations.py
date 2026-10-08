@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Query
 from pydantic import BaseModel, Field
 from app.models.response import ApiResponse
 from app.models.conversation import (
@@ -57,10 +57,11 @@ async def create_conversation(
 async def list_conversations(
     limit: int = 50,
     offset: int = 0,
+    include_empty: bool = Query(default=True, description="Whether to include empty conversations without user messages"),
     service: ConversationService = Depends(get_conversation_service)
 ):
     try:
-        convs = service.list_conversations(limit=limit, offset=offset)
+        convs = service.list_conversations(limit=limit, offset=offset, include_empty=include_empty)
         return ApiResponse(
             success=True,
             message="Conversations retrieved successfully.",
@@ -119,9 +120,10 @@ async def update_conversation(
 @router.delete("/{conversation_id}", response_model=ApiResponse)
 async def delete_conversation(
     conversation_id: str,
+    document_id: str = Query(..., min_length=1),
     service: ConversationService = Depends(get_conversation_service)
 ):
-    success = service.delete_conversation(conversation_id)
+    success = service.delete_conversation(conversation_id, document_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

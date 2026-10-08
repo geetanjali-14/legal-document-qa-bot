@@ -109,29 +109,34 @@ class RetrievalService:
         query_vector = self.embedding_service.embed_query(query, document_id=document_id)
         self.last_embedding_latency_ms = max(0.0, (time.perf_counter() - t_embed_start) * 1000.0)
 
-        raw_results = self.vector_store.search(
+        # Candidate retrieval: retrieve broader candidate set for reranking
+        candidate_k = max(k * 4, 20)
+        raw_candidates = self.vector_store.search(
             document_id=document_id,
             query_vector=query_vector,
-            top_k=k,
+            top_k=candidate_k,
             similarity_threshold=sim_threshold
         )
         self.last_retrieval_latency_ms = max(0.0, (time.perf_counter() - t_retrieval_start) * 1000.0)
 
-        # Apply semantic relevance gate when using default threshold
-        if threshold is None and raw_results:
-            if not self.is_context_relevant(query, raw_results):
+        # Apply semantic relevance gate on top candidates when using default threshold
+        if threshold is None and raw_candidates:
+            if not self.is_context_relevant(query, raw_candidates):
                 results = []
             else:
-                results = raw_results
+                results = raw_candidates
         else:
-            results = raw_results
+            results = raw_candidates
 
-        # Context Deduplication (P3-RETRIEVAL): remove chunks with identical text or nested overlaps
-        deduped_results = self.deduplicate_chunks(results)
+        # Apply Reranker: Multi-factor scoring (semantic similarity + lexical/clause/section match)
+        reranked_results = self.rerank_candidates(query, results)
+
+        # Context Deduplication: remove chunks with identical text or nested overlaps
+        deduped_results = self.deduplicate_chunks(reranked_results)[:k]
 
         logger.info(
             f"Retrieved {len(deduped_results)} chunks above threshold {sim_threshold} "
-            f"(raw={len(raw_results)}, deduped={len(deduped_results)}, retrieval={self.last_retrieval_latency_ms:.2f}ms, "
+            f"(candidates={len(raw_candidates)}, deduped={len(deduped_results)}, retrieval={self.last_retrieval_latency_ms:.2f}ms, "
             f"embedding={self.last_embedding_latency_ms:.2f}ms)"
         )
 
@@ -141,6 +146,47 @@ class RetrievalService:
                 f"section={chunk.section}, page={chunk.page_number}"
             )
         return deduped_results
+
+    def rerank_candidates(
+        self,
+        query: str,
+        candidates: List[Tuple[DocumentChunk, float]]
+    ) -> List[Tuple[DocumentChunk, float]]:
+        """
+        Rerank retrieved candidates based on:
+        - semantic relevance score
+        - exact lexical overlap of significant terms
+        - clause and section match with query references
+        """
+        if not candidates:
+            return []
+
+        query_words = self.extract_content_words(query)
+        # Extract potential clause/section references in query (e.g. "Section 15", "Clause 4.2")
+        ref_matches = set(re.findall(r'(?:section|clause|article|schedule|annexure)\s+([0-9IVXLCDM\.\(\)a-z]+)', query, re.IGNORECASE))
+
+        scored = []
+        for chunk, base_score in candidates:
+            final_score = base_score
+
+            # 1. Clause/Section identifier match boost
+            chunk_sec = (chunk.section or "") + " " + (getattr(chunk, "clause_number", "") or "")
+            for ref in ref_matches:
+                if ref.lower() in chunk_sec.lower():
+                    final_score += 0.25
+                    break
+
+            # 2. Lexical content overlap boost
+            if query_words:
+                chunk_words = self.extract_content_words(chunk.text)
+                overlap = len(query_words & chunk_words) / len(query_words)
+                final_score += overlap * 0.15
+
+            scored.append((chunk, final_score))
+
+        # Sort descending by updated rerank score
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored
 
     def deduplicate_chunks(self, results: List[Tuple[DocumentChunk, float]]) -> List[Tuple[DocumentChunk, float]]:
         """Remove duplicate or heavily subsumed chunks while preserving highest-ranking score."""

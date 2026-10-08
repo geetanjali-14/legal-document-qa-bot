@@ -63,12 +63,12 @@ def test_list_conversations_ordered(temp_db):
 
 def test_update_and_delete_conversation(temp_db):
     service: ConversationService = temp_db["service"]
-    conv = service.create_conversation(title="Initial Title")
+    conv = service.create_conversation(document_id="doc_delete", title="Initial Title")
     updated = service.update_conversation(conv.conversation_id, title="Renamed Title", status="archived")
     assert updated.title == "Renamed Title"
     assert updated.status == "archived"
 
-    deleted = service.delete_conversation(conv.conversation_id)
+    deleted = service.delete_conversation(conv.conversation_id, "doc_delete")
     assert deleted is True
     assert service.get_conversation(conv.conversation_id) is None
 
@@ -264,11 +264,27 @@ def test_conversations_rest_endpoints(monkeypatch, temp_db):
         assert res_patch.status_code == 200
         assert res_patch.json()["data"]["title"] == "Updated Title"
 
-        # DELETE /api/conversations/{id}
-        res_del = client.delete(f"/api/conversations/{c_id}")
+        # A different document scope cannot delete this conversation.
+        res_wrong_scope = client.delete(f"/api/conversations/{c_id}?document_id=doc_other")
+        assert res_wrong_scope.status_code == 404
+        assert client.get(f"/api/conversations/{c_id}").status_code == 200
+
+        # DELETE /api/conversations/{id} within the associated document scope
+        res_del = client.delete(f"/api/conversations/{c_id}?document_id=doc_abc")
         assert res_del.status_code == 200
         assert res_del.json()["data"]["deleted"] is True
 
         # Confirm 404 after deletion
         res_after = client.get(f"/api/conversations/{c_id}")
         assert res_after.status_code == 404
+
+
+def test_conversation_delete_requires_associated_document_scope(temp_db):
+    service: ConversationService = temp_db["service"]
+    conv = service.create_conversation(document_id="doc_owner")
+    service.add_message(conv.conversation_id, role="user", content="Keep this isolated")
+
+    assert service.delete_conversation(conv.conversation_id, "doc_other") is False
+    assert service.get_conversation(conv.conversation_id) is not None
+    assert service.delete_conversation(conv.conversation_id, "doc_owner") is True
+    assert service.get_conversation(conv.conversation_id) is None

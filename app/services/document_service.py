@@ -3,15 +3,19 @@ import uuid
 import re
 import time
 import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict
 from app.models.document import DocumentMetadata, DocumentChunk
 from app.models.structure import DocumentStructure
 from app.services.pdf_service import PDFService
+from app.services.image_service import ImageService
 from app.services.chunking_service import ChunkingService
 from app.services.structure_parser import StructureParser
 from app.services.embedding_service import EmbeddingService
 from app.services.vector_store import VectorStore
+import io
+from PIL import Image
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.errors import (
@@ -34,9 +38,11 @@ class DocumentService:
         embedding_service: EmbeddingService,
         vector_store: VectorStore,
         upload_dir: Optional[Path] = None,
-        structure_parser: Optional[StructureParser] = None
+        structure_parser: Optional[StructureParser] = None,
+        image_service: Optional[ImageService] = None
     ):
         self.pdf_service = pdf_service
+        self.image_service = image_service or ImageService()
         self.chunking_service = chunking_service
         self.embedding_service = embedding_service
         self.vector_store = vector_store
@@ -105,9 +111,40 @@ class DocumentService:
                 return doc
         return None
 
+    def detect_document_type(self, file_bytes: bytes, filename: str) -> str:
+        """
+        Detect whether file is a PDF or supported image by inspecting magic bytes/PIL
+        and filename extension against central settings.
+        Returns 'pdf' or 'image', or raises ValueError if unsupported.
+        """
+        ext = Path(filename).suffix.lower()
+        if ext not in settings.SUPPORTED_DOCUMENT_EXTENSIONS:
+            raise ValueError(
+                f"Unsupported document format '{ext}'. Supported formats: {', '.join(settings.SUPPORTED_DOCUMENT_EXTENSIONS)}"
+            )
+
+        if file_bytes.startswith(b"%PDF"):
+            return "pdf"
+
+        # Check if bytes constitute a valid image of supported type
+        try:
+            with Image.open(io.BytesIO(file_bytes)) as img:
+                fmt = (img.format or "").lower()
+                # Map formats: jpeg, png, webp, tiff
+                allowed_formats = {"png", "jpeg", "webp", "tiff"}
+                if fmt in allowed_formats:
+                    return "image"
+        except Exception:
+            pass
+
+        raise ValueError(
+            f"Invalid file format: Invalid file content for '{filename}'. File content does not match a supported document format."
+        )
+
     def process_document(self, file_bytes: bytes, original_filename: str) -> DocumentMetadata:
         """
         Validate, store, extract, chunk, embed, and index an uploaded document.
+        Supports PDF and image documents (PNG, JPG, JPEG, WEBP, TIFF).
         Detects duplicates based on SHA-256 hash of raw bytes before any expensive processing.
         """
         # Validate file size
@@ -117,8 +154,7 @@ class DocumentService:
                 f"File size ({len(file_bytes)} bytes) exceeds maximum allowed limit of {settings.MAX_FILE_SIZE_MB}MB."
             )
 
-        if not file_bytes.startswith(b"%PDF"):
-            raise ValueError("Invalid file format. Only standard PDF documents are supported.")
+        doc_type = self.detect_document_type(file_bytes, original_filename)
 
         t_process_start = time.perf_counter()
 
@@ -210,9 +246,12 @@ class DocumentService:
             f.write(file_bytes)
 
         try:
-            # 1. Extract text and pages
+            # 1. Extract text and pages (via PDFService or ImageService OCR)
             t_extract_start = time.perf_counter()
-            pages = self.pdf_service.extract_text_and_pages(saved_path)
+            if doc_type == "pdf":
+                pages = self.pdf_service.extract_text_and_pages(saved_path)
+            else:
+                pages = self.image_service.extract_text_and_pages(saved_path)
             extract_latency_ms = max(0.0, (time.perf_counter() - t_extract_start) * 1000.0)
 
             # 1b. Parse structural hierarchy & AST
@@ -268,6 +307,10 @@ class DocumentService:
 
             total_latency_ms = max(0.0, (time.perf_counter() - t_process_start) * 1000.0)
 
+            ext = Path(original_filename).suffix.lower()
+            mime = "application/pdf" if doc_type == "pdf" else f"image/{ext.lstrip('.')}"
+            upload_ts = datetime.now(timezone.utc).isoformat()
+
             meta = DocumentMetadata(
                 document_id=doc_id,
                 filename=safe_name,
@@ -275,11 +318,19 @@ class DocumentService:
                 file_size_bytes=len(file_bytes),
                 page_count=len(pages),
                 chunk_count=len(chunks),
+                mime_type=mime,
                 content_hash=content_hash,
+                document_type=doc_type,
+                processing_status="completed",
+                ocr_status="completed" if doc_type == "image" else "not_required",
+                parser_version="v2.0",
+                embedding_version="v2.0",
                 embedding_provider=actual_provider,
                 embedding_model=actual_model,
                 embedding_dimension=actual_dimension,
-                status="processed"
+                status="processed",
+                doc_type=doc_type,
+                upload_timestamp=upload_ts
             )
             self.documents[doc_id] = meta
             self._hash_to_id[content_hash] = doc_id
@@ -378,7 +429,11 @@ class DocumentService:
         saved_path = self.upload_dir / doc.filename
         if saved_path.exists():
             try:
-                pages = self.pdf_service.extract_text_and_pages(saved_path)
+                ext = saved_path.suffix.lower()
+                if ext in settings.SUPPORTED_IMAGE_EXTENSIONS:
+                    pages = self.image_service.extract_text_and_pages(saved_path)
+                else:
+                    pages = self.pdf_service.extract_text_and_pages(saved_path)
                 structure = self.structure_parser.parse_document(
                     document_id=document_id,
                     content_hash=doc.content_hash or "",

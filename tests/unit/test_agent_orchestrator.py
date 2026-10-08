@@ -241,6 +241,61 @@ def test_evidence_retrieval_tool_encapsulation(test_env):
     assert res.evidence_state == UncertaintyState.SUPPORTED
 
 
+def test_orchestrator_executes_scoped_evidence_search_and_records_audit(test_env):
+    orch = test_env["orch"]
+    mock_ret = test_env["retrieval_service"]
+    rental_chunk = DocumentChunk(
+        chunk_id="chk_rent_holdover",
+        document_id="doc_contract_1",
+        document_name="rental.pdf",
+        page_number=3,
+        section="Holdover Damages",
+        text=(
+            "If the premises are not vacated by the tenant at termination of the rent period, "
+            "the tenant will pay damages at two times the rent from expiry."
+        )
+    )
+    mock_ret.retrieve.return_value = [(rental_chunk, 0.46)]
+    orch.llm_service.provider = MockLLMProvider()
+    question = "What happens if the tenant does not vacate after the agreement expires?"
+
+    answer, citations, confidence, trace, _ = orch.process_query(
+        document_id="doc_contract_1",
+        question=question
+    )
+
+    mock_ret.retrieve.assert_called_once_with(
+        document_id="doc_contract_1",
+        query=question,
+        top_k=4
+    )
+    assert "two times the rent" in answer
+    assert confidence == "supported"
+    assert citations[0].document_id == "doc_contract_1"
+    assert citations[0].page_number == 3
+    assert citations[0].section == "Holdover Damages"
+    assert trace.selected_tools == ["search_document_evidence"]
+    assert trace.tool_executions[0].tool_input["document_id"] == "doc_contract_1"
+    assert "Retrieved 1 evidence chunks" in trace.tool_executions[0].tool_output_summary
+
+
+def test_orchestrator_records_empty_evidence_search(test_env):
+    orch = test_env["orch"]
+    mock_ret = test_env["retrieval_service"]
+    mock_ret.retrieve.return_value = []
+
+    answer, citations, confidence, trace, _ = orch.process_query(
+        document_id="doc_contract_1",
+        question="What is the rocket launch schedule?"
+    )
+
+    assert "couldn't find enough information" in answer.lower()
+    assert citations == []
+    assert confidence == "insufficient_context"
+    assert trace.selected_tools == ["search_document_evidence"]
+    assert trace.tool_executions[0].evidence_state == "insufficient_context"
+
+
 # =====================================================================
 # 5. P1-AGNT-01: Orchestrator Bounded Iterations & Multi-Intent
 # =====================================================================

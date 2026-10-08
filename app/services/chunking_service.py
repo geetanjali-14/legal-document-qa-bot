@@ -1,5 +1,6 @@
 import re
 import uuid
+import hashlib
 from typing import List, Optional, Tuple, Any
 from app.models.document import DocumentChunk, PageContent
 from app.core.logging import logger
@@ -77,6 +78,9 @@ class ChunkingService:
                     # Flush current buffer
                     chunk_id = f"chk_{uuid.uuid4().hex[:12]}"
                     breadcrumbs = self._resolve_breadcrumbs(chunk_section, structure)
+                    sec_num, sec_title, clause_num = self._extract_hierarchy_parts(chunk_section, buffer)
+                    c_hash = hashlib.sha256(buffer.strip().encode("utf-8")).hexdigest()
+                    parent_id = f"sec_{re.sub(r'[^a-zA-Z0-9]', '', sec_num)}" if sec_num else None
                     chunks.append(
                         DocumentChunk(
                             chunk_id=chunk_id,
@@ -84,6 +88,11 @@ class ChunkingService:
                             document_name=document_name,
                             page_number=page.page_number,
                             section=chunk_section,
+                            section_number=sec_num,
+                            section_title=sec_title,
+                            clause_number=clause_num,
+                            parent_chunk_id=parent_id,
+                            content_hash=c_hash,
                             breadcrumbs=breadcrumbs,
                             text=buffer.strip(),
                             token_count=len(buffer.split())
@@ -114,6 +123,9 @@ class ChunkingService:
             if buffer.strip() and len(buffer.strip()) >= self.min_chunk_size:
                 chunk_id = f"chk_{uuid.uuid4().hex[:12]}"
                 breadcrumbs = self._resolve_breadcrumbs(chunk_section, structure)
+                sec_num, sec_title, clause_num = self._extract_hierarchy_parts(chunk_section, buffer)
+                c_hash = hashlib.sha256(buffer.strip().encode("utf-8")).hexdigest()
+                parent_id = f"sec_{re.sub(r'[^a-zA-Z0-9]', '', sec_num)}" if sec_num else None
                 chunks.append(
                     DocumentChunk(
                         chunk_id=chunk_id,
@@ -121,6 +133,11 @@ class ChunkingService:
                         document_name=document_name,
                         page_number=page.page_number,
                         section=chunk_section,
+                        section_number=sec_num,
+                        section_title=sec_title,
+                        clause_number=clause_num,
+                        parent_chunk_id=parent_id,
+                        content_hash=c_hash,
                         breadcrumbs=breadcrumbs,
                         text=buffer.strip(),
                         token_count=len(buffer.split())
@@ -130,9 +147,36 @@ class ChunkingService:
                 # If leftover text is small, append to previous chunk to not lose context
                 chunks[-1].text += "\n\n" + buffer.strip()
                 chunks[-1].token_count = len(chunks[-1].text.split())
+                chunks[-1].content_hash = hashlib.sha256(chunks[-1].text.encode("utf-8")).hexdigest()
+
+        # Assign paragraph numbers across chunks in document
+        for idx, chk in enumerate(chunks, 1):
+            chk.paragraph_number = idx
 
         logger.info(f"Generated {len(chunks)} chunks for document {document_name} ({document_id})")
         return chunks
+
+    def _extract_hierarchy_parts(self, section: str, text: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Extract section number, section title, and clause number from section header or text."""
+        sec_num = None
+        sec_title = section
+        clause_num = None
+
+        # Check section number (e.g., Section 15 or 15.2 or Article 3)
+        m_sec = re.search(r'(?:Section|Article|Clause)\s+([0-9IVXLCDM]+(?:\.[0-9]+)*)', section, re.I)
+        if m_sec:
+            sec_num = m_sec.group(1)
+        else:
+            m_num = re.match(r'^(\d+(?:\.\d+)*)\.?', section)
+            if m_num:
+                sec_num = m_num.group(1)
+
+        # Check clause number in text e.g., 15.3 or (a) or (b)
+        m_clause = re.search(r'\b(\d+\.\d+(?:\.\d+)*|\([a-z0-9]+\))\b', text[:120])
+        if m_clause:
+            clause_num = m_clause.group(1)
+
+        return sec_num, sec_title, clause_num
 
     def _resolve_breadcrumbs(self, section: str, structure: Optional[Any]) -> List[str]:
         """Look up breadcrumbs from structure tree if available, or generate default breadcrumbs."""

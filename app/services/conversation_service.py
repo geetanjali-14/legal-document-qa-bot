@@ -47,9 +47,12 @@ class ConversationService:
             messages=messages
         )
 
-    def list_conversations(self, limit: int = 50, offset: int = 0) -> List[ConversationResponse]:
-        items = self.repository.list_conversations(limit=limit, offset=offset)
+    def list_conversations(self, limit: int = 50, offset: int = 0, include_empty: bool = True) -> List[ConversationResponse]:
+        items = self.repository.list_conversations(limit=limit, offset=offset, include_empty=include_empty)
         return [self._to_conversation_response(conv, count) for conv, count in items]
+
+    def cleanup_empty_conversations(self) -> int:
+        return self.repository.cleanup_empty_conversations()
 
     def add_message(
         self,
@@ -93,8 +96,8 @@ class ConversationService:
         messages = self.repository.get_messages(conversation_id)
         return self._to_conversation_response(conv, message_count=len(messages))
 
-    def delete_conversation(self, conversation_id: str) -> bool:
-        return self.repository.delete_conversation(conversation_id)
+    def delete_conversation(self, conversation_id: str, document_id: str) -> bool:
+        return self.repository.delete_conversation(conversation_id, document_id)
 
     def ensure_conversation_exists(
         self,

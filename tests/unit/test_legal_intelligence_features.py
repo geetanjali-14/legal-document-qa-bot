@@ -253,3 +253,88 @@ def test_retrieval_context_deduplication():
     assert deduped[0][0].chunk_id == "c1"
     assert deduped[1][0].chunk_id == "c3"
 
+
+def test_cross_reference_annexure_and_schedule():
+    """Verify CrossReferenceTool resolves Annexures and Schedules."""
+    from unittest.mock import MagicMock
+    parser = StructureParser()
+    p1 = "1. Deliverables\nDeliverables are set forth in Annexure A.\n\nAnnexure A. Specifications\nServer hardware must have 64GB RAM."
+    pages = [PageContent(page_number=1, text=p1, char_count=len(p1))]
+    structure = parser.parse_document(document_id="doc_annexure", content_hash="hash_a", pages=pages)
+
+    mock_doc_service = MagicMock()
+    mock_doc_service.get_document_structure.return_value = structure
+
+    tool = CrossReferenceTool(document_service=mock_doc_service)
+
+    res = tool.resolve_reference("doc_annexure", "Annexure A")
+    assert res["found"] is True
+    assert "Specifications" in res["title"] or "Annexure A" in res["title"]
+    assert "Specifications" in res["text_content"] or "Annexure A" in res["text_content"]
+
+
+def test_hierarchical_chunking_parent_child_provenance():
+    """Verify hierarchical chunking assigns clause, section, and parent_chunk_id."""
+    from app.services.chunking_service import ChunkingService
+    chunker = ChunkingService(chunk_size=200, chunk_overlap=20)
+    p1 = (
+        "Section 15. Termination\n"
+        "15.1 Termination by Owner. The Owner may terminate upon 30 days notice.\n"
+        "15.2 Termination by Tenant. The Tenant may terminate upon 60 days notice.\n"
+    )
+    pages = [PageContent(page_number=1, text=p1, char_count=len(p1))]
+    chunks = chunker.chunk_document(document_id="doc_hier", document_name="Agreement.pdf", pages=pages)
+
+    assert len(chunks) >= 1
+    for c in chunks:
+        assert c.document_id == "doc_hier"
+        assert c.content_hash != ""
+        assert c.token_count > 0
+    # At least one chunk has clause number or section number detected
+    assert any(c.clause_number or c.section_number for c in chunks)
+
+
+def test_grok_and_mistral_provider_initialization():
+    """Verify Grok and Mistral providers instantiate with custom endpoints."""
+    from app.services.llm_service import GrokLLMProvider, MistralLLMProvider
+    grok = GrokLLMProvider(api_key="mock-grok-key", model="grok-beta")
+    assert grok.provider_name == "grok"
+    assert "api.x.ai" in grok.base_url
+
+    mistral = MistralLLMProvider(api_key="mock-mistral-key", model="mistral-large-latest")
+    assert mistral.provider_name == "mistral"
+    assert "api.mistral.ai" in mistral.base_url
+
+
+def test_retrieval_candidate_reranking():
+    """Verify rerank_candidates boosts chunks matching query clause references."""
+    from unittest.mock import MagicMock
+    ret_service = RetrievalService(embedding_service=MagicMock(), vector_store=MagicMock())
+
+    chunk1 = DocumentChunk(
+        chunk_id="c1",
+        document_id="d1",
+        document_name="Test Agreement",
+        page_number=1,
+        section="Section 15 Termination",
+        clause_number="15.1",
+        text="Either party may terminate on written notice."
+    )
+    chunk2 = DocumentChunk(
+        chunk_id="c2",
+        document_id="d1",
+        document_name="Test Agreement",
+        page_number=2,
+        section="Section 3 Fees",
+        clause_number="3.1",
+        text="Invoices are due within 30 days."
+    )
+
+    candidates = [(chunk2, 0.6), (chunk1, 0.5)]
+    reranked = ret_service.rerank_candidates("What are the terms in Section 15?", candidates)
+
+    assert len(reranked) == 2
+    # chunk1 should be boosted to first place due to "Section 15" match
+    assert reranked[0][0].chunk_id == "c1"
+
+

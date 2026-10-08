@@ -584,13 +584,24 @@ class AgentOrchestrator:
                         )
                     )
 
-        # Check for cross-reference in query or top evidence
+        # Check for cross-reference in query or top evidence chunks
         if self.cross_ref_tool:
-            ref_match = re.search(r'(?:section|clause|article)\s+([0-9IVXLCDM\.\(\)a-z]+)', query, re.IGNORECASE)
-            if ref_match:
-                ref_res = self.cross_ref_tool.resolve_reference(document_id, ref_match.group(0))
+            # Check in query
+            ref_matches = re.findall(r'(?:section|clause|article|annexure|schedule|exhibit)\s+([0-9IVXLCDM\.\(\)a-z]+)', query, re.IGNORECASE)
+            # Also scan top evidence texts for internal cross-references
+            for item in evidence_result.items[:3]:
+                ref_matches.extend(re.findall(r'(?:subject\s+to|pursuant\s+to|as\s+provided\s+in|in\s+accordance\s+with)\s+((?:Section|Clause|Article|Annexure|Schedule|Exhibit)\s+[0-9IVXLCDM\.\(\)a-z]+)', item.text, re.IGNORECASE))
+
+            seen_refs = set()
+            for r_text in ref_matches:
+                clean_ref = str(r_text).strip()
+                if clean_ref.lower() in seen_refs:
+                    continue
+                seen_refs.add(clean_ref.lower())
+                ref_res = self.cross_ref_tool.resolve_reference(document_id, clean_ref)
                 if ref_res.get("found") and ref_res.get("text_content"):
-                    audit_trace.selected_tools.append("resolve_cross_reference")
+                    if "resolve_cross_reference" not in audit_trace.selected_tools:
+                        audit_trace.selected_tools.append("resolve_cross_reference")
                     evidence_result.items.append(
                         EvidenceItem(
                             document_id=document_id,

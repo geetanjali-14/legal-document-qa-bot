@@ -409,6 +409,30 @@ class GeminiLLMProvider(BaseLLMProvider):
             )
 
 
+class GrokLLMProvider(OpenAILLMProvider):
+    """
+    xAI Grok LLM Provider using OpenAI-compatible API interface.
+    Default endpoint: https://api.x.ai/v1
+    Default model: grok-beta
+    """
+    def __init__(self, api_key: str, model: str = "grok-beta", base_url: str = ""):
+        endpoint = base_url or "https://api.x.ai/v1"
+        super().__init__(api_key=api_key, model=model, base_url=endpoint)
+        self.provider_name = "grok"
+
+
+class MistralLLMProvider(OpenAILLMProvider):
+    """
+    Mistral AI LLM Provider using OpenAI-compatible chat completions interface.
+    Default endpoint: https://api.mistral.ai/v1
+    Default model: mistral-large-latest
+    """
+    def __init__(self, api_key: str, model: str = "mistral-large-latest", base_url: str = ""):
+        endpoint = base_url or "https://api.mistral.ai/v1"
+        super().__init__(api_key=api_key, model=model, base_url=endpoint)
+        self.provider_name = "mistral"
+
+
 class LLMService:
     def __init__(self):
         self.provider = self._resolve_provider()
@@ -424,6 +448,26 @@ class LLMService:
             return OpenAILLMProvider(
                 api_key=settings.LLM_API_KEY,
                 model=settings.LLM_MODEL,
+                base_url=settings.LLM_BASE_URL
+            )
+        elif provider_name == "grok":
+            if not settings.LLM_API_KEY:
+                logger.warning("LLM_API_KEY missing for Grok. Falling back to MockLLMProvider.")
+                return MockLLMProvider()
+            model = settings.LLM_MODEL if settings.LLM_MODEL and settings.LLM_MODEL != "gpt-4o-mini" else "grok-beta"
+            return GrokLLMProvider(
+                api_key=settings.LLM_API_KEY,
+                model=model,
+                base_url=settings.LLM_BASE_URL
+            )
+        elif provider_name == "mistral":
+            if not settings.LLM_API_KEY:
+                logger.warning("LLM_API_KEY missing for Mistral. Falling back to MockLLMProvider.")
+                return MockLLMProvider()
+            model = settings.LLM_MODEL if settings.LLM_MODEL and settings.LLM_MODEL != "gpt-4o-mini" else "mistral-large-latest"
+            return MistralLLMProvider(
+                api_key=settings.LLM_API_KEY,
+                model=model,
                 base_url=settings.LLM_BASE_URL
             )
         elif provider_name == "gemini":

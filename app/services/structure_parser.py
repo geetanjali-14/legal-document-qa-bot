@@ -8,7 +8,7 @@ Extracts and parses:
 - Breadcrumbs for chunks and citations
 """
 import re
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from app.models.document import PageContent
 from app.models.structure import (
     SectionNode,
@@ -159,14 +159,21 @@ class StructureParser:
             flat_sections["1.0"] = fallback
             flat_sections["general"] = fallback
 
-        # Second pass: Extract definitions and cross-references from all page text
+        # Second pass: Extract definitions, cross-references, schedules, and annexures
+        tables: List[Dict[str, Any]] = []
+        schedules: List[Dict[str, Any]] = []
+        annexures: List[Dict[str, Any]] = []
+
         for page in pages:
             self._extract_definitions(page.text, page.page_number, definitions)
             self._extract_cross_references(page.text, page.page_number, cross_references)
+            self._extract_schedules_annexures(page.text, page.page_number, schedules, annexures)
+            self._extract_tables(page.text, page.page_number, tables)
 
         logger.info(
             f"Parsed structure for doc {document_id}: {len(flat_sections)} sections, "
-            f"{len(definitions)} definitions, {len(cross_references)} cross-references."
+            f"{len(definitions)} definitions, {len(cross_references)} cross-references, "
+            f"{len(schedules)} schedules, {len(annexures)} annexures."
         )
 
         return DocumentStructure(
@@ -175,7 +182,10 @@ class StructureParser:
             nodes=nodes,
             definitions=definitions,
             cross_references=cross_references,
-            flat_sections=flat_sections
+            flat_sections=flat_sections,
+            tables=tables,
+            schedules=schedules,
+            annexures=annexures
         )
 
     def _classify_header(self, line: str) -> Optional[Tuple[int, str, str]]:
@@ -296,4 +306,60 @@ class StructureParser:
                     context_sentence=context
                 )
             )
+
+    def _extract_schedules_annexures(
+        self,
+        text: str,
+        page_num: int,
+        schedules: List[Dict[str, Any]],
+        annexures: List[Dict[str, Any]]
+    ) -> None:
+        """Detect schedule and annexure headers/references."""
+        sched_pattern = re.compile(r'\b(?:Schedule|SCHEDULE)\s+([A-Z0-9]+)(?:[.:\-\s]+(.*))?', re.IGNORECASE)
+        annex_pattern = re.compile(r'\b(?:Annexure|ANNEXURE|Exhibit|EXHIBIT|Appendix|APPENDIX)\s+([A-Z0-9IVX]+)(?:[.:\-\s]+(.*))?', re.IGNORECASE)
+        for line in text.split("\n"):
+            line_str = line.strip()
+            m_s = sched_pattern.match(line_str)
+            if m_s:
+                schedules.append({
+                    "schedule_id": m_s.group(1).strip(),
+                    "title": (m_s.group(2) or "").strip() or f"Schedule {m_s.group(1).strip()}",
+                    "page_number": page_num,
+                    "header": line_str
+                })
+            m_a = annex_pattern.match(line_str)
+            if m_a:
+                annexures.append({
+                    "annexure_id": m_a.group(1).strip(),
+                    "title": (m_a.group(2) or "").strip() or f"Annexure {m_a.group(1).strip()}",
+                    "page_number": page_num,
+                    "header": line_str
+                })
+
+    def _extract_tables(
+        self,
+        text: str,
+        page_num: int,
+        tables: List[Dict[str, Any]]
+    ) -> None:
+        """Detect markdown-like or pipe/tab delimited tabular data."""
+        lines = [l.strip() for l in text.split("\n") if l.strip()]
+        table_lines = []
+        for line in lines:
+            if "|" in line or "\t" in line or (re.search(r'\s{3,}', line) and len(re.findall(r'\s{3,}', line)) >= 2):
+                table_lines.append(line)
+            else:
+                if len(table_lines) >= 2:
+                    tables.append({
+                        "page_number": page_num,
+                        "row_count": len(table_lines),
+                        "content": "\n".join(table_lines)
+                    })
+                table_lines = []
+        if len(table_lines) >= 2:
+            tables.append({
+                "page_number": page_num,
+                "row_count": len(table_lines),
+                "content": "\n".join(table_lines)
+            })
 

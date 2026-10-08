@@ -14,6 +14,8 @@ async def health_check():
             "status": "healthy",
             "app_name": settings.APP_NAME,
             "llm_provider": settings.LLM_PROVIDER,
-            "embedding_provider": settings.EMBEDDING_PROVIDER
+            "embedding_provider": settings.EMBEDDING_PROVIDER,
+            "supported_document_formats": list(settings.SUPPORTED_DOCUMENT_EXTENSIONS),
+            "supported_image_formats": list(settings.SUPPORTED_IMAGE_EXTENSIONS)
         }
     )

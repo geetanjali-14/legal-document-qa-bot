@@ -40,11 +40,30 @@ class CrossReferenceTool:
                 "latency_ms": max(0.0, (time.perf_counter() - t_start) * 1000.0)
             }
 
-        # Normalize target string (e.g. "Section 12.4" -> "12.4")
-        clean_target = re.sub(r'^(?:Section|Article|Clause)\s+', '', target_reference, flags=re.IGNORECASE).strip()
+        # Normalize target string (e.g. "Section 12.4" -> "12.4", "Annexure I" -> "I", "Schedule A" -> "A")
+        clean_target = re.sub(r'^(?:Section|Article|Clause|Annexure|Schedule|Exhibit|Appendix)\s+', '', target_reference, flags=re.IGNORECASE).strip()
         norm_key = re.sub(r'[^a-z0-9]', '', clean_target.lower())
 
         target_node = structure.flat_sections.get(norm_key) or structure.flat_sections.get(clean_target.lower())
+
+        # Check in schedules or annexures
+        if not target_node:
+            for item in getattr(structure, "schedules", []) + getattr(structure, "annexures", []):
+                s_id = str(item.get("schedule_id") or item.get("annexure_id") or "").lower()
+                if norm_key == s_id or clean_target.lower() in item.get("title", "").lower():
+                    latency_ms = max(0.0, (time.perf_counter() - t_start) * 1000.0)
+                    return {
+                        "document_id": document_id,
+                        "found": True,
+                        "target": target_reference,
+                        "resolved_section_id": item.get("schedule_id") or item.get("annexure_id"),
+                        "title": item.get("title"),
+                        "page_start": item.get("page_number", 1),
+                        "page_end": item.get("page_number", 1),
+                        "breadcrumb": [item.get("title")],
+                        "text_content": item.get("header") or item.get("title"),
+                        "latency_ms": round(latency_ms, 2)
+                    }
 
         if not target_node:
             # Check for partial matches

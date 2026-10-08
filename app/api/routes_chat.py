@@ -150,8 +150,32 @@ async def ask_question(
     conv_service = services.get("conversation")
     active_conversation_id = None
     bounded_history = []
+    is_newly_created_conv = False
     if conv_service:
         try:
+            # Defensive validation: verify conversation belongs to requested document_id
+            if request.conversation_id:
+                existing_conv = conv_service.get_conversation(request.conversation_id)
+                if not existing_conv:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Conversation with ID '{request.conversation_id}' was not found."
+                    )
+                if request.document_id not in (existing_conv.document_ids or []):
+                    logger.warning(
+                        f"[{request_id}] Mismatched document and conversation: conversation {request.conversation_id} "
+                        f"belongs to {existing_conv.document_ids}, not '{request.document_id}'."
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            f"Conversation '{request.conversation_id}' does not belong to document '{request.document_id}'. "
+                            f"Mismatched document/conversation requests are rejected to maintain document isolation."
+                        )
+                    )
+            else:
+                is_newly_created_conv = True
+
             conv_resp = conv_service.ensure_conversation_exists(
                 conversation_id=request.conversation_id,
                 document_id=request.document_id
@@ -169,6 +193,8 @@ async def ask_question(
                 role="user",
                 content=request.question
             )
+        except HTTPException:
+            raise
         except ValueError as ve:
             logger.warning(f"[{request_id}] Conversation error: {str(ve)}")
             raise HTTPException(
@@ -177,6 +203,14 @@ async def ask_question(
             )
         except Exception as e:
             logger.error(f"[{request_id}] Error ensuring conversation: {str(e)}")
+
+    def rollback_if_failed():
+        if conv_service and active_conversation_id and is_newly_created_conv:
+            try:
+                conv_service.delete_conversation(active_conversation_id, request.document_id)
+                logger.info(f"[{request_id}] Rolled back newly created conversation {active_conversation_id} due to request failure.")
+            except Exception as rb_err:
+                logger.warning(f"[{request_id}] Failed to rollback conversation: {rb_err}")
 
     # Fallback to client-provided history if no persistent conversation history exists
     effective_history = bounded_history if bounded_history else (request.history or [])
@@ -227,6 +261,7 @@ async def ask_question(
                 ).model_dump()
             )
         except EmbeddingDimensionMismatchError as dim_err:
+            rollback_if_failed()
             logger.error(f"[{request_id}] Embedding dimension mismatch: {str(dim_err)}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -234,6 +269,7 @@ async def ask_question(
                 headers={"X-Error-Category": "embedding_dimension_mismatch"}
             )
         except ContextLimitExceededError as cle:
+            rollback_if_failed()
             total_latency_ms = max(0.0, (time.perf_counter() - t_request_start) * 1000.0)
             telemetry = ChatTelemetry(
                 request_id=request_id,
@@ -251,6 +287,7 @@ async def ask_question(
                 headers={"X-Error-Category": cle.error_category}
             )
         except TokenBudgetExceededError as tbe:
+            rollback_if_failed()
             total_latency_ms = max(0.0, (time.perf_counter() - t_request_start) * 1000.0)
             telemetry = ChatTelemetry(
                 request_id=request_id,
@@ -268,8 +305,10 @@ async def ask_question(
                 headers={"X-Error-Category": tbe.error_category}
             )
         except HTTPException:
+            rollback_if_failed()
             raise
         except Exception as e:
+            rollback_if_failed()
             logger.error(f"[{request_id}] Unexpected error in agent orchestrator: {str(e)}", exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -560,6 +599,7 @@ async def ask_question(
                 citations = []
 
     except TokenBudgetExceededError as tbe:
+        rollback_if_failed()
         total_latency_ms = max(0.0, (time.perf_counter() - t_request_start) * 1000.0)
         telemetry = ChatTelemetry(
             request_id=request_id,
@@ -581,6 +621,7 @@ async def ask_question(
             headers={"X-Error-Category": tbe.error_category}
         )
     except Exception as e:
+        rollback_if_failed()
         logger.error(f"[{request_id}] LLM generation failure: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

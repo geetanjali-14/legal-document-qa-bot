@@ -116,7 +116,27 @@ class PDFService:
             doc.close()
 
     def _attempt_selective_ocr(self, page: Any, page_num: int) -> Optional[str]:
-        """Attempt OCR on a single low-text page if OCR provider is available."""
+        """Attempt OCR on a single low-text page using RapidOCR or pytesseract if available."""
+        try:
+            import numpy as np
+            from rapidocr_onnxruntime import RapidOCR
+            pix = page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            from PIL import Image
+            import io
+            img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+            np_img = np.array(img)
+            engine = RapidOCR()
+            result, _ = engine(np_img)
+            if result:
+                lines = [str(line_data[1]).strip() for line_data in result if line_data and len(line_data) >= 2 and line_data[1]]
+                cleaned = self.clean_text("\n".join(lines))
+                if cleaned:
+                    logger.info(f"[Selective OCR] Successfully extracted {len(cleaned)} chars on page {page_num} via RapidOCR")
+                    return cleaned
+        except Exception as ocr_err:
+            logger.debug(f"[Selective OCR] RapidOCR failed for page {page_num}: {ocr_err}")
+
         try:
             import pytesseract
             from PIL import Image
@@ -127,8 +147,8 @@ class PDFService:
             ocr_text = pytesseract.image_to_string(img)
             cleaned = self.clean_text(ocr_text)
             if cleaned:
-                logger.info(f"[Selective OCR] Successfully extracted {len(cleaned)} chars on page {page_num}")
-                return f"[OCR Derived] {cleaned}"
+                logger.info(f"[Selective OCR] Successfully extracted {len(cleaned)} chars on page {page_num} via pytesseract")
+                return cleaned
         except Exception as ocr_err:
-            logger.debug(f"[Selective OCR] OCR unavailable for page {page_num}: {ocr_err}")
+            logger.debug(f"[Selective OCR] pytesseract unavailable for page {page_num}: {ocr_err}")
         return None

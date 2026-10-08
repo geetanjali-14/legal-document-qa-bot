@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from app.core.config import settings
 from app.core.logging import logger
 from app.services.pdf_service import PDFService
+from app.services.image_service import ImageService
 from app.services.chunking_service import ChunkingService
 from app.services.embedding_service import EmbeddingService
 from app.services.vector_store import VectorStore
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI):
     # Startup: initialize services
     logger.info("Initializing Legal Document QA Assistant services...")
     pdf_service = PDFService(max_pages=settings.MAX_DOCUMENT_PAGES)
+    image_service = ImageService(max_pages=settings.MAX_DOCUMENT_PAGES)
     chunking_service = ChunkingService(
         chunk_size=settings.CHUNK_SIZE,
         chunk_overlap=settings.CHUNK_OVERLAP,
@@ -50,6 +52,7 @@ async def lifespan(app: FastAPI):
 
     document_service = DocumentService(
         pdf_service=pdf_service,
+        image_service=image_service,
         chunking_service=chunking_service,
         embedding_service=embedding_service,
         vector_store=vector_store
@@ -58,6 +61,11 @@ async def lifespan(app: FastAPI):
     db_manager = app_state.get("db_manager") or DatabaseManager(db_path=settings.DATABASE_PATH)
     conversation_repo = app_state.get("conversation_repo") or ConversationRepository(session_factory=db_manager.session_factory)
     conversation_service = app_state.get("conversation_service") or ConversationService(repository=conversation_repo)
+    # Defensive cleanup on startup: prune any old empty conversations
+    try:
+        conversation_service.cleanup_empty_conversations()
+    except Exception as cleanup_err:
+        logger.warning(f"Could not perform startup empty conversation cleanup: {cleanup_err}")
 
     from app.services.tools.structure_tool import SectionStructureTool
     from app.services.tools.reference_tools import CrossReferenceTool, DefinitionTool

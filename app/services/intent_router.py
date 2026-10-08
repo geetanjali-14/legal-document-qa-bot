@@ -76,6 +76,40 @@ CROSS_SECTION_PATTERNS = [
     r"\bhow\s+does\s+section\s+.*relate\s+to\s+section\b",
 ]
 
+# Patterns for WHOLE_DOCUMENT intent
+WHOLE_DOCUMENT_PATTERNS = [
+    r"\ball\s+(?:the\s+)?(?:tenant|vendor|client|owner|party|parties)\s+obligations\b",
+    r"\ball\s+obligations\b",
+    r"\ball\s+financial\s+obligations\b",
+    r"\ball\s+deadlines\b",
+    r"\blist\s+all\s+deadlines\b",
+    r"\bbiggest\s+risks\b",
+    r"\ball\s+risks\b",
+    r"\bwhat\s+happens\s+if\s+either\s+party\s+terminates\b",
+    r"\bare\s+there\s+conflicting\s+clauses\b",
+    r"\bentire\s+document\b",
+    r"\bwhole\s+document\b",
+    r"\bthroughout\s+(?:the|this)\s+(?:agreement|document|contract)\b",
+]
+
+# Patterns for OBLIGATION intent
+OBLIGATION_PATTERNS = [
+    r"\bwhat\s+obligations\b",
+    r"\bwhat\s+duties\b",
+    r"\bresponsibilities\s+of\b",
+    r"\bwhat\s+must\s+(?:the\s+)?(?:tenant|vendor|client|owner)\s+do\b",
+    r"\bwhat\s+is\s+(?:the\s+)?(?:tenant|vendor|client|owner)\s+required\s+to\b",
+]
+
+# Patterns for RISK intent
+RISK_PATTERNS = [
+    r"\bis\s+this\s+agreement\s+risky\b",
+    r"\brisks?\s+for\s+(?:the\s+)?(?:tenant|client|vendor|owner)\b",
+    r"\bone-sided\b",
+    r"\bpotential\s+liabilities\b",
+    r"\bunfavorable\s+terms\b",
+]
+
 
 class IntentRouter:
     """
@@ -89,6 +123,9 @@ class IntentRouter:
         self._structure_regex = [re.compile(p, re.IGNORECASE) for p in STRUCTURE_PATTERNS]
         self._compare_regex = [re.compile(p, re.IGNORECASE) for p in COMPARE_PATTERNS]
         self._cross_regex = [re.compile(p, re.IGNORECASE) for p in CROSS_SECTION_PATTERNS]
+        self._whole_doc_regex = [re.compile(p, re.IGNORECASE) for p in WHOLE_DOCUMENT_PATTERNS]
+        self._obligation_regex = [re.compile(p, re.IGNORECASE) for p in OBLIGATION_PATTERNS]
+        self._risk_regex = [re.compile(p, re.IGNORECASE) for p in RISK_PATTERNS]
 
     def route_query(self, query: str) -> IntentRoutingResult:
         """
@@ -139,6 +176,30 @@ class IntentRouter:
             matched_intents.append(IntentType.CROSS_SECTION_ANALYSIS)
             sub_intents.append({
                 "intent": IntentType.CROSS_SECTION_ANALYSIS.value
+            })
+
+        # Check for Whole-Document questions
+        has_whole_doc = any(rx.search(cleaned_query) for rx in self._whole_doc_regex)
+        if has_whole_doc:
+            matched_intents.append(IntentType.WHOLE_DOCUMENT)
+            sub_intents.append({
+                "intent": IntentType.WHOLE_DOCUMENT.value
+            })
+
+        # Check for Obligations
+        has_obligation = any(rx.search(cleaned_query) for rx in self._obligation_regex)
+        if has_obligation:
+            matched_intents.append(IntentType.OBLIGATION)
+            sub_intents.append({
+                "intent": IntentType.OBLIGATION.value
+            })
+
+        # Check for Risks
+        has_risk = any(rx.search(cleaned_query) for rx in self._risk_regex)
+        if has_risk:
+            matched_intents.append(IntentType.RISK)
+            sub_intents.append({
+                "intent": IntentType.RISK.value
             })
 
         # Handle multi-intent composition (e.g. Overview + Metadata)

@@ -14,6 +14,8 @@ class SectionNode(BaseModel):
     char_start: int = 0
     char_end: int = 0
     subsections: List["SectionNode"] = Field(default_factory=list)
+    clauses: List["SectionNode"] = Field(default_factory=list)
+    paragraphs: List[str] = Field(default_factory=list)
     text_content: Optional[str] = None
 
 
@@ -40,6 +42,9 @@ class DocumentStructure(BaseModel):
     definitions: Dict[str, LegalDefinition] = Field(default_factory=dict)
     cross_references: List[CrossReference] = Field(default_factory=list)
     flat_sections: Dict[str, SectionNode] = Field(default_factory=dict)  # keyed by normalized section_id
+    tables: List[Dict[str, Any]] = Field(default_factory=list)
+    schedules: List[Dict[str, Any]] = Field(default_factory=list)
+    annexures: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class StructureResult(BaseModel):

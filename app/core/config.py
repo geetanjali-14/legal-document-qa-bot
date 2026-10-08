@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     MAX_DOCUMENT_PAGES: int = 500
     MAX_CHUNKS_PER_DOC: int = 5000
 
+    # Supported formats
+    SUPPORTED_IMAGE_EXTENSIONS: tuple = (".png", ".jpg", ".jpeg", ".webp", ".tiff", ".tif")
+    SUPPORTED_DOCUMENT_EXTENSIONS: tuple = (".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tiff", ".tif")
+
     # Chunking
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 100
@@ -46,7 +50,7 @@ class Settings(BaseSettings):
     MAX_HISTORY_TOKENS: int = 500
 
     # LLM Provider
-    LLM_PROVIDER: Literal["mock", "openai", "anthropic", "ollama", "gemini", "custom_http"] = "mock"
+    LLM_PROVIDER: Literal["mock", "openai", "anthropic", "ollama", "gemini", "grok", "mistral", "custom_http"] = "mock"
     LLM_API_KEY: str = ""
     LLM_MODEL: str = "gpt-4o-mini"
     LLM_BASE_URL: str = ""
@@ -58,6 +62,10 @@ class Settings(BaseSettings):
     EMBEDDING_API_KEY: str = ""
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_BASE_URL: str = ""
+
+    # OCR Provider
+    OCR_PROVIDER: Literal["local", "mistral", "gemini"] = "local"
+    OCR_API_KEY: str = ""
 
 
 settings = Settings()

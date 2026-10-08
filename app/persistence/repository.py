@@ -1,7 +1,7 @@
 from typing import List, Optional, Tuple
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 from app.persistence.models import ConversationModel, MessageModel, DocumentProfileModel, utc_now
 from app.core.logging import logger
 
@@ -42,14 +42,20 @@ class ConversationRepository:
                 session.expunge_all()
             return conv
 
-    def list_conversations(self, limit: int = 50, offset: int = 0) -> List[Tuple[ConversationModel, int]]:
-        """Returns list of (ConversationModel, message_count) ordered by updated_at descending."""
+    def list_conversations(self, limit: int = 50, offset: int = 0, include_empty: bool = True) -> List[Tuple[ConversationModel, int]]:
+        """
+        Returns list of (ConversationModel, message_count) ordered by updated_at descending.
+        When include_empty is False, only returns conversations containing at least one meaningful user message.
+        """
         with self.session_factory() as session:
-            # Query conversations with message counts
+            # Query message count and user message count
             subq = (
                 session.query(
                     MessageModel.conversation_id,
-                    func.count(MessageModel.message_id).label("msg_count")
+                    func.count(MessageModel.message_id).label("msg_count"),
+                    func.sum(
+                        case((MessageModel.role == "user", 1), else_=0)
+                    ).label("user_msg_count")
                 )
                 .group_by(MessageModel.conversation_id)
                 .subquery()
@@ -58,6 +64,13 @@ class ConversationRepository:
             query = (
                 session.query(ConversationModel, func.coalesce(subq.c.msg_count, 0))
                 .outerjoin(subq, ConversationModel.conversation_id == subq.c.conversation_id)
+            )
+
+            if not include_empty:
+                query = query.filter(func.coalesce(subq.c.user_msg_count, 0) > 0)
+
+            query = (
+                query
                 .order_by(ConversationModel.updated_at.desc())
                 .offset(offset)
                 .limit(limit)
@@ -68,6 +81,40 @@ class ConversationRepository:
                 session.expunge(conv)
                 results.append((conv, count))
             return results
+
+    def cleanup_empty_conversations(self) -> int:
+        """
+        Defensive cleanup: removes any persisted conversations that have zero user messages
+        or zero messages altogether.
+        """
+        with self.session_factory() as session:
+            subq = (
+                session.query(
+                    MessageModel.conversation_id,
+                    func.sum(
+                        case((MessageModel.role == "user", 1), else_=0)
+                    ).label("user_count")
+                )
+                .group_by(MessageModel.conversation_id)
+                .subquery()
+            )
+
+            empty_convs = (
+                session.query(ConversationModel)
+                .outerjoin(subq, ConversationModel.conversation_id == subq.c.conversation_id)
+                .filter(
+                    (subq.c.user_count == None) | (subq.c.user_count == 0)
+                )
+                .all()
+            )
+
+            deleted_count = len(empty_convs)
+            for conv in empty_convs:
+                session.delete(conv)
+            session.commit()
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} empty conversation(s) lacking user messages.")
+            return deleted_count
 
     def add_message(
         self,
@@ -148,12 +195,12 @@ class ConversationRepository:
             session.expunge(conv)
             return conv
 
-    def delete_conversation(self, conversation_id: str) -> bool:
+    def delete_conversation(self, conversation_id: str, document_id: str) -> bool:
         with self.session_factory() as session:
             conv = session.query(ConversationModel).filter(
                 ConversationModel.conversation_id == conversation_id
             ).first()
-            if not conv:
+            if not conv or document_id not in (conv.document_ids or []):
                 return False
             session.delete(conv)
             session.commit()

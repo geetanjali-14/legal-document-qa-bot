@@ -2,7 +2,7 @@ import numpy as np
 from pathlib import Path
 from app.services.vector_store import VectorStore
 from app.services.retrieval_service import RetrievalService
-from app.services.embedding_service import MockEmbeddingProvider, EmbeddingService
+from app.services.embedding_service import MockEmbeddingProvider, EmbeddingService, TFIDFEmbeddingProvider
 from app.models.document import DocumentChunk
 
 
@@ -54,3 +54,51 @@ def test_vector_store_isolation_and_retrieval(tmp_path: Path):
     # Delete doc_a and verify
     assert store.delete_document("doc_a") is True
     assert len(retrieval.retrieve("doc_a", "termination")) == 0
+
+
+def test_tfidf_retrieval_finds_inflected_holdover_clause(tmp_path: Path):
+    store = VectorStore(storage_dir=tmp_path)
+    embedding_service = EmbeddingService()
+    embedding_service.provider = TFIDFEmbeddingProvider()
+    document_id = "doc_rental"
+    chunks = [
+        DocumentChunk(
+            chunk_id="rental_intro",
+            document_id=document_id,
+            document_name="rental.pdf",
+            page_number=1,
+            section="Rental Agreement",
+            text="This rental agreement is made between the owner and tenant for residential purposes.",
+        ),
+        DocumentChunk(
+            chunk_id="rental_parties",
+            document_id=document_id,
+            document_name="rental.pdf",
+            page_number=2,
+            section="General Terms",
+            text="The parties have signed this agreement. The tenant will follow the rules of the premises.",
+        ),
+        DocumentChunk(
+            chunk_id="rental_holdover",
+            document_id=document_id,
+            document_name="rental.pdf",
+            page_number=3,
+            section="Holdover Damages",
+            text=(
+                "If the premises are not vacated by the tenant at termination of the rent period, "
+                "the tenant will pay damages at two times the rent for occupation commencing from expiry."
+            ),
+        ),
+    ]
+    vectors = embedding_service.embed_texts([chunk.text for chunk in chunks], document_id=document_id)
+    store.add_document(document_id, chunks, vectors, embedding_provider="tfidf", embedding_model="tfidf-scikit")
+    retrieval = RetrievalService(embedding_service, store)
+
+    results = retrieval.retrieve(
+        document_id=document_id,
+        query="What happens if the tenant does not vacate after the agreement expires?",
+        top_k=4,
+    )
+
+    assert results
+    assert any(chunk.chunk_id == "rental_holdover" for chunk, _ in results)

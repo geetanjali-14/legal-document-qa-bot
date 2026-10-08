@@ -61,6 +61,13 @@ def test_end_to_end_legal_rag_flow(client):
     assert len(res_data["sources"]) > 0
     assert res_data["sources"][0]["page_number"] == 1
     assert "Termination" in res_data["sources"][0]["section"]
+    assert "search_document_evidence" in res_data["audit_trace"]["selected_tools"]
+    evidence_execution = next(
+        item for item in res_data["audit_trace"]["tool_executions"]
+        if item["tool_name"] == "search_document_evidence"
+    )
+    assert evidence_execution["tool_input"]["document_id"] == doc_id
+    assert "Retrieved" in evidence_execution["tool_output_summary"]
 
     # 2. Ask known question about governing law
     chat_resp_law = client.post(
