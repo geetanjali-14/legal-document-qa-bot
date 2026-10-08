@@ -1,220 +1,270 @@
 # Technical Architecture Document
 ## Agentic Legal Document Intelligence Application
 
-* **Document Version:** 3.0.0
-* **Status:** Grounded Agentic System Architecture & Document Intelligence Pipeline (Reviewed October 7, 2026)
+* **Document Version:** 4.0.0
+* **Status:** Functional MVP with known RAG correctness gap; Target RAG Architecture Document.
+* **Current Priority:** Implement Hybrid RAG Core (Docling + Structural Chunker + Gemini Embedding 2 + Local Qdrant + BM25 + RRF + Question Routing + Gemini 3.8 Flash).
 * **Author:** Lead Architect & Systems Engineering Team
-* **Last Updated:** October 7, 2026
+* **Last Updated:** October 8, 2026
 
 ---
 
 ## 1. System Architecture Overview
 
-The **Legal Document Intelligence Application** architecture is designed around the core principle:
-> **The LLM is the reasoning component, not the source of truth.**
+The **Legal Document Intelligence Application** architecture is built on the EXISTING FastAPI backend and vanilla JavaScript frontend. We do **NOT** create a separate RAG project or lab.
 
 ```text
                                   USER QUERY + CONVERSATION ID + ACTIVE DOC(S)
                                                         │
                                                         ▼
                                 ┌──────────────────────────────────────────────┐
-                                │ Conversation & Context Manager               │
-                                │ - Restores session from SQLite               │
-                                │ - Bounded history (MAX 3 turns, no snippets) │
-                                │ - Resolves active document(s) & version scope│
+                                │ FastAPI API Gateway (routes_chat.py)         │
+                                │ - Request validation, rate & resource limits │
+                                │ - Resolves active document(s) & conversation │
                                 └───────────────────────┬──────────────────────┘
                                                         │
                                                         ▼
                                 ┌──────────────────────────────────────────────┐
-                                │ Intent Classifier & Multi-Intent Router      │
-                                │ - Deterministic regex rules (0 Tokens)       │
-                                │ - Lightweight classifier prompt fallback     │
-                                │ - Ambiguity detection -> CLARIFICATION       │
-                                └───────────────────────┬──────────────────────┘
-                                                        │
-         ┌───────────────────────┬──────────────────────┼──────────────────────┬──────────────────────┐
-         ▼                       ▼                      ▼                      ▼                      ▼
-┌──────────────────┐    ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐
-│ METADATA         │    │ DOC_OVERVIEW     │   │ STRUCTURE / REF  │   │ EVIDENCE_SEARCH  │   │ MULTI_DOC_COMPARE│
-│ get_metadata     │    │ get_doc_profile  │   │ get_structure    │   │ search_evidence  │   │ compare_clauses  │
-│ (0 LLM Tokens)   │    │ (Profile/TOC)    │   │ resolve_ref (AST)│   │ (Gate + Reasoner)│   │ (Isolated scopes)│
-└────────┬─────────┘    └────────┬─────────┘   └────────┬─────────┘   └────────┬─────────┘   └────────┬─────────┘
-         │                       │                      │                      │                      │
-         └───────────────────────┼──────────────────────┴──────────────────────┼──────────────────────┘
-                                 │
-                                 ▼
+                                │ Question Router                              │
+                                │ - Deterministic rules & lightweight classifier│
+                                └──────────────┬───────────────────────────────┘
+                                               │
+               ┌───────────────────────────────┴───────────────────────────────┐
+               ▼                                                               ▼
+    ┌───────────────────────────────┐                       ┌──────────────────────────────────────────────┐
+    │ General Question Path         │                       │ Document Question Path                       │
+    │ - "What is the day today?"    │                       │ - "What is the notice period?"               │
+    │ - "What is Python?"           │                       │ - "What is mentioned in ANNEXURE-I?"         │
+    │                               │                       │ - "Who is the tenant?"                       │
+    │ Direct LLM (0 doc retrieval)  │                       └──────────────────────┬───────────────────────┘
+    │ Avoids false refusal bug      │                                              │
+    └──────────────┬────────────────┘                                              ▼
+                   │                                        ┌──────────────────────────────────────────────┐
+                   │                                        │ Query Preparation & Expansion                │
+                   │                                        │ - Term extraction & clause normalization     │
+                   │                                        └──────────────────────┬───────────────────────┘
+                   │                                                               │
+                   │                                                               ▼
+                   │                                        ┌──────────────────────────────────────────────┐
+                   │                                        │ Hybrid Retrieval Engine                      │
+                   │                                        │ ┌──────────────────────┐ ┌──────────────────┐│
+                   │                                        │ │ Dense Semantic Search│ │ BM25 Lexical     ││
+                   │                                        │ │ Gemini Embedding 2   │ │ Inverted Index   ││
+                   │                                        │ │ Local Qdrant Store   │ │ Keyword Matching ││
+                   │                                        │ └──────────┬───────────┘ └────────┬─────────┘│
+                   │                                        │            └──────────┬───────────┘          │
+                   │                                        │                       ▼                      │
+                   │                                        │ Reciprocal Rank Fusion (RRF, k=60)           │
+                   │                                        └──────────────────────┬───────────────────────┘
+                   │                                                               │
+                   │                                                               ▼
+                   │                                        ┌──────────────────────────────────────────────┐
+                   │                                        │ Context Builder                              │
+                   │                                        │ - Untrusted XML fencing                      │
+                   │                                        │   (<context_document_data>)                  │
+                   │                                        │ - Metadata preservation (pages, clauses)     │
+                   │                                        └──────────────────────┬───────────────────────┘
+                   │                                                               │
+                   │                                                               ▼
+                   │                                        ┌──────────────────────────────────────────────┐
+                   │                                        │ Answer Generator (Gemini 3.8 Flash)          │
+                   │                                        │ - Strict evidence grounding                  │
+                   │                                        │ - Structured status (supported / partial)    │
+                   │                                        │ - Never treats doc text as instructions      │
+                   │                                        └──────────────────────┬───────────────────────┘
+                   │                                                               │
+                   │                                                               ▼
+                   │                                        ┌──────────────────────────────────────────────┐
+                   │                                        │ Citation & Evidence Validation Engine        │
+                   │                                        │ - Claim-level evidence verification          │
+                   │                                        │ - 1-indexed page & section mapping           │
+                   │                                        └──────────────────────┬───────────────────────┘
+                   │                                                               │
+                   └───────────────────────────────┬───────────────────────────────┘
+                                                   │
+                                                   ▼
                                 ┌──────────────────────────────────────────────┐
-                                │ Agent Orchestrator & Legal Reasoner          │
-                                │ - Bounded iterations (Single-doc: 2, Multi: 3)│
-                                │ - Evidence validation & Conflict Detection   │
-                                │ - Fences evidence in <context_document_data> │
-                                └───────────────────────┬──────────────────────┘
-                                                        │
-                                                        ▼
-                                ┌──────────────────────────────────────────────┐
-                                │ Grounding & Citation Validation Engine       │
-                                │ - Claim-level evidence verification          │
-                                │ - Verifies 1-indexed page & section mapping  │
-                                │ - Clears citations if output is a refusal    │
-                                └───────────────────────┬──────────────────────┘
-                                                        │
-                                                        ▼
-                                ┌──────────────────────────────────────────────┐
-                                │ Conversation Persistence & Audit Repository  │
-                                │ - Commits messages, citations, telemetry     │
-                                │ - Execution transparency audit record        │
-                                │ - SQLite repository (data/legal_qa.db)       │
-                                └───────────────────────┬──────────────────────┘
-                                                        │
-                                                        ▼
+                                │ Conversation Persistence (SQLite Repository) │
+                                │ - Messages, citations, audit telemetry       │
+                                └──────────────────────┬───────────────────────┘
+                                                       │
+                                                       ▼
                         GROUNDED ANSWER + VERIFIED CITATIONS + TRANSPARENCY AUDIT
 ```
 
 ---
 
-## 2. Document Intelligence Ingestion Pipeline
+## 2. Document Ingestion & Structure-Aware Legal Chunking Pipeline
 
-Ingestion transitions from a flat chunker to a multi-stage **Document Intelligence Pipeline**:
+Flat, fixed-size 500-token/character chunking is fundamentally obsolete for contracts. Ingestion is upgraded to a structural extraction pipeline:
 
 ```text
-Upload PDF Binary Stream
-            │
-            ▼
-┌───────────────────────────────────────┐
-│ 1. Document Validation & Hashing      │  [SYNCHRONOUS / DETERMINISTIC]
-│ - Magic bytes (%PDF), 25 MB limit     │
-│ - SHA-256 byte hashing (OPT-001)      │
-└───────────────────┬───────────────────┘
-                    │ Unseen Hash
-                    ▼
-┌───────────────────────────────────────┐
-│ 2. Text Extraction & Page Preservation│  [SYNCHRONOUS / DETERMINISTIC]
-│ - PyMuPDF block extraction            │
-│ - Line-wrap hyphen reconstruction     │
-│ - 500-page limit check                │
-└───────────────────┬───────────────────┘
-                    │
-                    ▼
-┌───────────────────────────────────────┐
-│ 3. Structural Section & Clause Parser │  [SYNCHRONOUS / DETERMINISTIC]
-│ - Detects Article/Section hierarchy   │
-│ - Extracts nested numbering (8.2(b))  │
-│ - Identifies Defined Terms table      │
-└───────────────────┬───────────────────┘
-                    │
-                    ▼
-┌───────────────────────────────────────┐
-│ 4. Semantic Chunking & Vectors        │  [SYNCHRONOUS / DETERMINISTIC]
-│ - Chunks inherit Section & Page tags  │
-│ - FastEmbed BGE-Small dense vectors   │
-│ - Sidecar metadata (OPT-008)          │
-└───────────────────┬───────────────────┘
-                    │
-                    ▼
-┌───────────────────────────────────────┐
-│ 5. Document Profile Synthesizer       │  [ASYNCHRONOUS / CACHED LLM]
-│ - Executive summary & key topics      │
-│ - Identified parties & effective date │
-│ - Persisted to SQLite document_profiles│
-└───────────────────────────────────────┘
+Uploaded PDF Binary
+        │
+        ▼
+┌──────────────────────────────────────────────┐
+│ 1. Docling Document Parser                   │
+│ - Preserves physical layout & page boundaries│
+│ - Identifies headers, clauses, tables, lists │
+└──────────────────────┬───────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────┐
+│ 2. Structured Document Intermediate Model    │
+│ - Document title, preamble, and parties      │
+│ - Recitals                                   │
+│ - Numbered clauses & subclauses (hierarchical)│
+│ - Annexures & Schedules (e.g., ANNEXURE-I)   │
+│ - Definitions block                          │
+│ - Signatures & execution block               │
+└──────────────────────┬───────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────┐
+│ 3. Custom Structure-Aware Legal Chunker      │
+│ - Keeps clause units intact with context     │
+│ - Attaches parent section & document metadata│
+│ - Assigns deterministic chunk_ids            │
+└──────────────────────┬───────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────┐
+│ 4. Dual Indexing Engine                      │
+│ ├── Dense Index: Gemini Embedding 2 → Qdrant │
+│ └── Lexical Index: Tokenization → BM25 Index │
+└──────────────────────────────────────────────┘
+```
+
+### Chunk Metadata Contract
+Each chunk stored in Qdrant and the BM25 index contains:
+* `document_id`: Unique identifier of the uploaded document.
+* `chunk_id`: Structured unique ID (e.g. `doc_<id>_sec_<num>_chunk_<idx>`).
+* `page_number`: 1-indexed primary page where the clause appears.
+* `section_title`: Section heading (e.g., *"Termination"*, *"Annexure-I - Inventory of Fixtures"*).
+* `section_number`: Section/clause identifier (e.g., *"Clause 14"*, *"Clause 21.2(a)"*, *"ANNEXURE-I"*).
+* `text`: Full clause or section chunk text.
+* `document_metadata`: Document title, filename, SHA-256 hash, and upload timestamp.
+
+---
+
+## 3. Technology Decisions & Provider Architecture
+
+### 3.1 Technology Decisions Matrix
+
+| Layer | Selected Technology | Rationale | Status |
+|---|---|---|---|
+| **Backend** | FastAPI / Python 3.12 | Existing high-performance async web framework | Current |
+| **Document Parsing** | **Docling** | Preserves layout, document hierarchy, tables, annexures | Target (Replaces PyMuPDF) |
+| **Chunking** | **Custom Structure-Aware Legal Chunker** | Avoids cutting clauses mid-sentence; isolates annexures & definitions | Target (Replaces flat chunker) |
+| **Dense Embeddings** | **Gemini Embedding 2** (`text-embedding-004` / latest) | High semantic density, legal reasoning capacity | Target (Primary Provider) |
+| **Vector DB** | **Qdrant** (Local development instance) | Filterable payload metadata, high search performance, isolated collections | Target (Replaces in-memory numpy) |
+| **Lexical Search** | **BM25** (`rank-bm25` / scikit) | Essential for exact legal identifiers (`ANNEXURE-I`, `Clause 15`, names) | Target (Replaces pure TF-IDF) |
+| **Fusion** | **Reciprocal Rank Fusion (RRF)** | Proven rank aggregation combining dense semantic + lexical candidates | Target |
+| **LLM Provider** | **Gemini 3.8 Flash** | Fast, high-accuracy context following, cost-effective | Target (Primary Provider) |
+| **Alternative LLM** | OpenAI (`gpt-4o` / `gpt-4o-mini`) | Existing provider abstraction support | Maintained as alternative |
+| **Local Fallback** | Ollama | Optional future local fallback; NOT part of immediate implementation | Deferred |
+| **Reranking** | Local Cross-Encoder | Avoids premature debugging complexity before hybrid baseline is proven | Deferred |
+| **Persistence** | SQLite (`data/legal_qa.db` with WAL) | Durable conversation, message, citation, and profile store | Current / Preserved |
+| **Frontend** | Existing Vanilla JS / HTML | Clean, responsive UI with conversation list and citation modal | Current / Preserved |
+
+### 3.2 Provider Abstraction Pattern
+
+The provider architecture is decoupled and configurable:
+
+```text
+EmbeddingProvider (Interface)
+├── GeminiEmbeddingProvider (Primary: Gemini Embedding 2)
+└── LocalEmbeddingProvider (Fallback: e.g. FastEmbed / BGE history)
+
+LLMProvider (Interface)
+├── GeminiLLMProvider (Primary: Gemini 3.8 Flash)
+├── OpenAILLMProvider (Secondary: OpenAI models)
+└── Future providers (e.g., Ollama - deferred)
+```
+
+**Key Architectural Rules:**
+1. **Unified Pipeline:** Gemini and OpenAI do **NOT** have separate RAG pipelines. Both providers consume identical context structures generated by the hybrid retrieval engine.
+2. **Provider-Independent Retrieval:** Ingestion, chunking, Qdrant indexing, BM25 retrieval, and RRF operate independently of the selected LLM provider.
+3. **Environment Security:** All API keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`) must remain environment variables. **Never hard-code API keys.**
+
+---
+
+## 4. Hybrid Retrieval & Reciprocal Rank Fusion (RRF)
+
+### 4.1 Why Vector Search Alone Fails Legal QA
+Legal documents require two distinct retrieval modalities:
+1. **Exact Identifiers:** Questions inquiring about *"ANNEXURE-I"*, *"Clause 15"*, *"Security Deposit of Rs. 50,000"*, or *"John Doe"* frequently fail under pure vector similarity because the vector space smooths alphanumeric tokens into generic legal concepts. BM25 guarantees high ranking for exact keywords.
+2. **Conceptual Queries:** Questions inquiring about *"What happens if the agreement ends early?"* or *"What are tenant liabilities on damage?"* require dense vector representations to match provisions phrased as *"Termination on Default"* or *"Indemnification and Repairs"*.
+
+### 4.2 Reciprocal Rank Fusion Formulation
+Given a query $q$:
+1. Retrieve top $N$ dense candidates from Qdrant: $D = [d_1, d_2, \dots, d_N]$.
+2. Retrieve top $N$ BM25 candidates from inverted index: $B = [b_1, b_2, \dots, b_N]$.
+3. Compute the fused RRF score for each unique chunk $c$:
+   $$RRF(c) = \frac{1}{60 + r_{dense}(c)} + \frac{1}{60 + r_{bm25}(c)}$$
+   (where $r(c)$ is the 1-indexed rank, or $\infty$ if not retrieved in that channel).
+4. Sort by descending $RRF(c)$ and select the top $K$ candidates for evidence fencing.
+
+---
+
+## 5. Question Routing Architecture
+
+The question router eliminates the defect where general non-document inquiries (e.g., *"What is the day today?"*, *"What is Python?"*) enter retrieval and return false document refusals (*"Not stated in document"*).
+
+```text
+                         User Inbound Message
+                                   │
+                                   ▼
+                   ┌───────────────────────────────┐
+                   │ Deterministic Pattern Matches │
+                   │ - Greetings, system queries,  │
+                   │   generic definitions         │
+                   └───────────────┬───────────────┘
+                                   │
+                     ┌─────────────┴─────────────┐
+                     ▼ Match                     ▼ No Match
+           ┌───────────────────┐       ┌───────────────────────────────┐
+           │ Route: GENERAL    │       │ Lightweight Classifier Check  │
+           │ Direct LLM Invoke │       │ Document Question?            │
+           │ (0 Doc Retrieval) │       └───────────────┬───────────────┘
+           └───────────────────┘                       │
+                                         ┌─────────────┴─────────────┐
+                                         ▼ Yes                       ▼ No
+                               ┌───────────────────┐       ┌───────────────────┐
+                               │ Route: DOCUMENT   │       │ Route: GENERAL    │
+                               │ Hybrid RAG Flow   │       │ Direct LLM Invoke │
+                               └───────────────────┘       └───────────────────┘
 ```
 
 ---
 
-## 3. Tool Architecture & Registry
+## 6. Grounding, Answer Generation & Citations
 
-Tools are decoupled interfaces adhering to a strict abstract contract:
-
-### Core Tools (P0 / P1)
-1. **`get_document_metadata` [CURRENT / P1-TOOL-01]:**
-   * *Signature:* `(document_id: str) -> MetadataResult`
-   * *Returns:* `page_count`, `original_filename`, `file_size_bytes`, `created_at`, `status`. (0 LLM tokens).
-2. **`get_document_profile` [CURRENT / P1-TOOL-02]:**
-   * *Signature:* `(document_id: str) -> ProfileResult`
-   * *Returns:* `document_type`, `parties`, `effective_date`, `executive_summary`, `major_sections`. Caches in SQLite `document_profiles`.
-3. **`search_document_evidence` [CURRENT / P1-TOOL-03]:**
-   * *Signature:* `(document_ids: List[str], query: str, top_k: int = 4) -> EvidenceResult`
-   * *Returns:* Chunks passing `OPT-003` confidence gate with page/section citations.
-4. **`get_section_structure` [PLANNED / P2]:**
-   * *Signature:* `(document_id: str, section_number: Optional[str]) -> StructureResult`
-   * *Returns:* Table of contents, clause hierarchy, page numbers. (0 LLM tokens).
-
-### Near-Term Tools (P2)
-5. **`resolve_cross_reference`:**
-   * *Signature:* `(document_id: str, target_section: str) -> ReferenceResult`
-   * *Returns:* Exact text of referenced provision (e.g., Section 12.4).
-6. **`lookup_definition`:**
-   * *Signature:* `(document_id: str, term: str) -> DefinitionResult`
-   * *Returns:* Defined meaning from contract's Definitions section.
-7. **`compare_document_clauses`:**
-   * *Signature:* `(doc_a_id: str, doc_b_id: str, topic: str) -> ComparisonResult`
-   * *Returns:* Isolated, side-by-side evidence chunks tagged by document ID.
-
----
-
-## 4. Conflict Detection & Legal Reasoning Architecture
-
-### Conflict Detection Engine
-When a query touches provisions that appear contradictory:
-1. `search_document_evidence` gathers candidate chunks from all relevant sections.
-2. The Legal Reasoner detects disparate values (e.g., notice period: 30 days vs. 45 days).
-3. The Reasoner marks state as `CONFLICTING_EVIDENCE`.
-4. Output format:
-   > *"The document contains potentially conflicting provisions regarding notice:*
-   > *1. Section 4.2 (Page 3) specifies 30 days notice.*
-   > *2. Section 11.1 (Page 8) specifies 45 days notice.*
-   > *Note: Whether one provision takes legal precedence depends on contractual interpretation rules; no automated determination is made."*
-
----
-
-## 5. Persistence & Audit Schema (SQLite)
-
-```sql
-CREATE TABLE conversations (
-    conversation_id VARCHAR(36) PRIMARY KEY,
-    title VARCHAR(255) NOT NULL,
-    document_ids JSON NOT NULL, -- List of active document IDs
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    status VARCHAR(32) DEFAULT 'active'
-);
-
-CREATE TABLE messages (
-    message_id VARCHAR(36) PRIMARY KEY,
-    conversation_id VARCHAR(36) NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
-    role VARCHAR(16) NOT NULL, -- 'user', 'assistant', 'system'
-    content TEXT NOT NULL,
-    intent VARCHAR(32),
-    evidence_state VARCHAR(32), -- 'SUPPORTED', 'PARTIALLY_SUPPORTED', 'CONFLICTING', etc.
-    sources JSON, -- Serialized List[Citation]
-    telemetry JSON, -- Serialized ChatTelemetry
-    transparency_audit JSON, -- Detected intent, tools used, validation checks
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL
-);
-
-CREATE TABLE document_profiles (
-    document_id VARCHAR(36) PRIMARY KEY,
-    content_hash VARCHAR(64) NOT NULL,
-    document_type VARCHAR(128),
-    parties JSON,
-    effective_date VARCHAR(64),
-    executive_summary TEXT,
-    major_sections JSON,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL
-);
-
-CREATE INDEX idx_messages_conversation ON messages(conversation_id, created_at);
+### 6.1 Untrusted Context Fencing & Injection Defense
+Retrieved chunks are formatted as inert data inside machine-readable XML fences:
+```xml
+<context_document_data document_id="doc_xyz">
+  <chunk id="chunk_1" page="3" section="Clause 14 - Termination">
+    Either party may terminate this agreement by providing thirty (30) days written notice...
+  </chunk>
+</context_document_data>
 ```
+* The LLM prompt treats this data as strictly untrusted text.
+* Prompt injections embedded in contracts cannot hijack system instructions.
+
+### 6.2 Structured Answer States
+Instead of fragile hardcoded strings (*"Not stated in document"*), the generation layer enforces conceptual response states:
+* `supported`: All aspects of the inquiry are substantiated by retrieved chunks.
+* `partially_supported`: Specific sub-questions are answered; unsupported elements are explicitly stated as not found.
+* `insufficient_context`: Document context lacks evidence to ground an answer.
+
+### 6.3 Citation Integrity
+* Every claim must be tied to its supporting chunk with 1-indexed page number and section title.
+* The system validates that cited chunks genuinely contain the factual basis of the claim.
 
 ---
 
-## 6. Architectural Risks & Mitigations
+## 7. Deferred Architectural Components
 
-| Risk | Description | Concrete Architectural Mitigation |
-|---|---|---|
-| **Over-Agentification** | Autonomous loop latency spikes and runaway token spend. | Bounded execution loop ($\le 2$ iterations for single-doc); deterministic routing of metadata queries with 0 tokens. |
-| **Hallucinated Summaries** | Precomputed summaries invent contract terms. | Summaries are synthesized exclusively from extracted text chunks; profile stores source page breadcrumbs. |
-| **Silent Conflict Selection** | Model picks one provision when two conflict. | Conflict detection engine scans for numerical/temporal disparities across retrieved chunks and flags `CONFLICTING_EVIDENCE`. |
-| **Cross-Document Contamination** | Searching across Document A and B mixes clauses. | Isolated retrieval namespaces per document; citations explicitly tag source `document_id`. |
-| **Prompt Injection Hijack** | Malicious text inside contracts commands the agent. | XML boundaries (`<context_document_data>`) per OPT-016; system prompt instruction hierarchy. |
-| **SQLite Concurrency** | Database locking on concurrent writes. | Scoped sessions, WAL mode enabled; repository abstraction supports future PostgreSQL migration if needed. |
+* **Reranking Engine:** Implementation of cross-encoder rerankers is **DEFERRED** until the Docling + structure-aware chunking + Gemini Embedding 2 + Qdrant + BM25 + RRF baseline is fully verified and benchmarked. Adding a reranker prematurely complicates retrieval debugging.
+* **Ollama Local LLM:** Deferred until after Gemini and OpenAI provider parity is established.

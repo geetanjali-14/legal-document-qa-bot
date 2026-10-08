@@ -1355,7 +1355,8 @@ button, input, textarea {
   color: var(--blue-700);
 }
 
-.hidden {
+.hidden,
+[hidden] {
   display: none !important;
 }
 

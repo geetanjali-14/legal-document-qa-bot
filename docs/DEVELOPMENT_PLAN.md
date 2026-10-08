@@ -1,91 +1,212 @@
 # Development Plan & Implementation Roadmap
 ## Agentic Legal Document Intelligence Application
 
-* **Document Version:** 3.0.0
-* **Status:** Grounded Agentic Implementation Roadmap (Reviewed October 7, 2026)
+* **Document Version:** 4.0.0
+* **Status:** Functional MVP with known RAG correctness gap; Final Implementation Plan.
+* **Current Priority:** Implement and verify the Hybrid RAG Core in the existing FastAPI application.
 * **Author:** Lead Architect & QA Engineering Lead
-* **Last Updated:** October 7, 2026
+* **Last Updated:** October 8, 2026
 
 ---
 
-## 1. Roadmap Architecture & Engineering Principles
+## 1. Executive Summary & Principles
 
-This roadmap organizes the development of the **Legal Document Intelligence Application** into strict dependency phases:
+This implementation plan governs the upgrade of the **Legal Document Intelligence Application** from its legacy heuristic retrieval state to the target **Docling + Structure-Aware Chunking + Gemini Embedding 2 + Local Qdrant + BM25 + RRF + Question Routing + Gemini 3.8 Flash** architecture.
 
-1. **Never build an agent before its tools exist:** Implementing agent loops without deterministic metadata or retrieval tools leads to mocked abstractions and architectural churn.
-2. **Persistence First (P0):** Establishing durable conversation and document state in SQLite is the necessary foundation for session tracking, multi-turn history, and frontend resilience.
-3. **Preserve Completed Baselines:** 93 automated unit/integration tests and 16/16 RAG evaluation benchmark cases are passing and must remain green across all milestones.
-4. **Lean & Bounded Agent Execution:** The agent loop is constrained ($\le 2$ iterations for single-doc, $\le 3$ for multi-doc) to guarantee deterministic latency and cost bounds.
-
----
-
-## 2. Capability Catalog & Classification
-
-| Task ID | Component / Capability | Horizon | Role in Agentic Architecture |
-|---|---|---|---|
-| **OPT-001** | Duplicate Document Detection | **CURRENT** | Content-based duplicate detection using SHA-256 byte hashing. |
-| **OPT-003** | No-Evidence = No-LLM Gate | **CURRENT** | Serves as evidentiary validation gate inside `search_document_evidence`. |
-| **UNANS-005**| Compound Query Decomposition | **CURRENT** | Baseline for multi-part query splitting and partial answerability. |
-| **OPT-008** | Dense Local Embeddings | **CURRENT** | FastEmbed ONNX local dense vectors backing the evidence tool. |
-| **OPT-016** | Prompt Injection Defense | **CURRENT** | XML evidentiary delimitation (`<context_document_data>`) and instruction hierarchy. |
-| **OPT-017** | Token & Cost Telemetry | **CURRENT** | Request latency, token accounting, and cost tracking. |
-| **OPT-018** | RAG Evaluation Benchmark | **CURRENT** | 16/16 offline evaluation cases; expanded into Agentic Evaluation Suite. |
-| **OPT-021** | Hard Resource Limits | **CURRENT** | Bounded file size, pages, chunks, queries, and prompt tokens. |
-| **P0-CHAT-01**| Conversation & Message Persistence | **COMPLETED** | SQLite relational persistence for conversations, messages, citations, and telemetry. |
-| **P0-CHAT-02**| Document-Scoped Context & Memory | **COMPLETED** | Bounded sliding window (`MAX_HISTORY_TURNS = 3`) and document context association. |
-| **P0-CHAT-03**| Frontend Conversation State Restore | **COMPLETED** | Sidebar conversation list and state restoration on page refresh. |
-| **P1-TOOL-01**| Document Metadata Tool | **COMPLETED** | Deterministic resolution of page counts, filenames, sizes with 0 LLM tokens. |
-| **P1-ROUT-01**| Intent Classification & Router | **COMPLETED** | Hybrid router classifying 7 operational intents with multi-intent decomposition. |
-| **P1-TOOL-02**| Document Overview & Profile Tool | **COMPLETED** | Pre-computed or cached whole-document executive summary and parties in SQLite. |
-| **P1-TOOL-03**| Evidence Retrieval Tool | **COMPLETED** | Discrete tool wrapping vector search and OPT-003 confidence gate. |
-| **P1-AGNT-01**| Agent Orchestrator & Bounded Loop | **COMPLETED** | Coordinates tool execution, manages bounded iterations, and synthesizes answers. |
-| **P1-EVAL-01**| Agentic Evaluation Suite | **COMPLETED** | 138 unit tests and 16/16 offline RAG benchmark cases passing deterministically. |
-| **P2-DOC-01** | Section Tree & Structural AST | **COMPLETED** | Structural hierarchy parsing (`8` $\to$ `8.2` $\to$ `8.2(b)`), definitions, and cross-references. |
-| **P2-TOOL-04**| Section & Structure Tool | **COMPLETED** | Clause lookups and table-of-contents navigation (0 LLM tokens). |
-| **P2-TOOL-05**| Cross-Reference & Definition Tools | **COMPLETED** | Resolves *"subject to Section 12.4"* and defined legal terms. |
-| **P2-MDOC-01**| Multi-Document Comparison Tool | **COMPLETED** | Cross-contract clause alignment with isolated document namespaces. |
-| **OPT-006**  | Query Contextualization Engine | **COMPLETED** | Follow-up pronoun rewriter using bounded conversation history. |
-| **P3-REAS-01**| Conflict & Temporal Reasoner | **COMPLETED** | Detects conflicting provisions and reasons across contract timelines. |
-| **P3-OBLE-01**| Obligation Extraction Tool | **COMPLETED** | Extracts structured commitments (Who $\to$ What $\to$ When $\to$ Condition). |
-| **P3-RISK**   | Analytical Risk & Exception Analysis| **COMPLETED** | Identifies uncapped liability, one-sided termination, and unusual notice terms. |
-| **P3-RETRIEVAL**| Context Deduplication & Fusion | **COMPLETED** | Subsumed chunk deduplication and token pruning while preserving score. |
-| **DB-001**   | PostgreSQL Adapter | **COMPLETED** | Configurable `DATABASE_URL` with pooled connection management. |
-| **DOC-001**  | Selective OCR Pipeline | **COMPLETED** | Selective OCR fallback hook for low-text pages. |
-| **PROD-001** | Production Containerization | **COMPLETED** | Multi-stage Docker packaging (`Dockerfile`, `.dockerignore`). |
+### Core Principles
+1. **Existing Application Context:** All work takes place directly within the existing FastAPI backend (`app/`) and frontend (`frontend/`). We do **NOT** create a separate RAG project or lab.
+2. **Provider-Independent Retrieval:** The hybrid retrieval engine produces a standardized evidence representation consumable by any configured LLM provider.
+3. **No Premature Complexity:** Reranking is explicitly deferred until the hybrid retrieval baseline is verified.
+4. **Verification Over Green Lights:** A passing synthetic benchmark or HTTP 200 does not equal real-world correctness. The RAG pipeline is successful only when real legal contracts (e.g., Rental Agreements) retrieve accurate clauses and annexures.
 
 ---
 
-## 3. Phased Roadmap Specifications
+## 2. Implementation Phases & Work Breakdown
 
-### Milestone P0: Foundation & Persistence (MUST HAVE) — COMPLETED
-* **P0-CHAT-01:** Durable SQLite relational store for conversations, messages, citations, and telemetry.
-* **P0-CHAT-02:** Document-scoped context and bounded sliding memory ($\le 3$ turns).
-* **P0-CHAT-03:** Multi-conversation frontend sidebar and state restoration on page reload.
+```text
+Phase 0: Current-State Audit
+   ↓
+Phase 1: Document Ingestion Replacement (Docling)
+   ↓
+Phase 2: Structure-Aware Legal Chunking
+   ↓
+Phase 3: Gemini Embeddings + Local Qdrant
+   ↓
+Phase 4: Hybrid Retrieval (Dense + BM25 + RRF)
+   ↓
+Phase 5: Question Routing (General vs. Document)
+   ↓
+Phase 6: Gemini 3.8 Flash Answer Generation & Grounding
+   ↓
+Phase 7: Real-Document Validation Suite
+   ↓
+Phase 8: Retrieval & Answer Evaluation Benchmark
+   ↓
+Phase 9: Reranking (DEFERRED)
+   ↓
+Phase 10: Production Hardening
+```
 
-### Milestone P1: Agentic Core & Tool Orchestration (MUST HAVE) — COMPLETED
-* **P1-TOOL-01:** Deterministic metadata resolution (0 LLM tokens).
-* **P1-ROUT-01:** Intent classification across 7 intents with multi-intent decomposition.
-* **P1-TOOL-02:** Whole-document profile synthesis and SQLite caching.
-* **P1-TOOL-03:** Scoped evidence retrieval with semantic confidence gate.
-* **P1-AGNT-01:** Bounded agent orchestrator with loop bounds and citation verification.
-* **P1-EVAL-01:** Full automated test suite and offline RAG evaluation benchmark.
+---
 
-### Milestone P2: Document Intelligence & Legal Hierarchy — COMPLETED
-* **P2-DOC-01 (Section Tree & Structural AST):** Implemented `StructureParser` parsing Articles, Sections, Clauses, sub-clauses, page ranges, defined terms, and internal cross-references.
-* **P2-TOOL-04 (Section & Structure Tool):** Implemented `SectionStructureTool` for deterministic table of contents and clause navigation consuming 0 LLM tokens.
-* **P2-TOOL-05 & P2-TOOL-05B (Cross-Reference & Definition Tools):** Implemented `CrossReferenceTool` and `DefinitionTool` resolving internal cross-references within isolated document scopes and distinguishing defined legal terms from ordinary phrasing.
-* **P2-MDOC-01 (Multi-Document Comparison Tool):** Implemented `MultiDocumentComparisonTool` performing isolated searches across document pairs with status classifications (`same`, `different`, `present_only_in_a`, `present_only_in_b`, `insufficient_evidence`).
-* **OPT-006 (Contextual Follow-up Engine):** Bounded pronoun resolution and antecedent linking preserving document isolation.
+### PHASE 0 — Current-State Audit
+* **Scope:**
+  * Audit existing ingestion (`app/services/pdf_service.py`), chunking (`app/services/chunking_service.py`), retrieval (`app/services/retrieval_service.py`), vector store (`app/services/vector_store.py`), and agent orchestrator (`app/services/agent_orchestrator.py`).
+  * Trace the actual execution path for ingestion $\to$ retrieval $\to$ answer generation.
+  * Identify exact failure points causing document questions to fail on real contracts (e.g. miss on ANNEXURE-I, generic clause mix-up).
+  * Identify system boundaries for extraction, chunking, vector storage, and LLM calls.
+  * Preserve working non-RAG infrastructure (SQLite conversation store, session history, metadata endpoints, frontend layout).
+* **Deliverable:** Verified audit map and test execution baseline.
 
-### Milestone P3: Legal Reasoning & Advanced Retrieval — COMPLETED
-* **P3-REAS-01 (Conflict Detection):** Implemented `ConflictDetector` discovering numerical and temporal inconsistencies across provisions without choosing a controlling clause.
-* **P3-TEMPORAL (Timeline Reasoning):** Implemented `TemporalReasoner` extracting structured deadlines, notice windows, and cure periods.
-* **P3-OBLE-01 (Obligation Extraction):** Implemented `ObligationExtractor` structuring modalities (`shall`, `must`, `may not`, `may`), parties, actions, and conditions.
-* **P3-RISK (Controlled Risk & Exception Analysis):** Implemented `RiskAnalyzer` providing analytical observations on uncapped liabilities and one-sided clauses.
-* **P3-RETRIEVAL (Context Deduplication):** Implemented `deduplicate_chunks` in `RetrievalService` pruning duplicate or subsumed text chunks.
+---
 
-### Milestone P4: Enterprise Production Readiness — COMPLETED
-* **P4-DB (PostgreSQL Readiness):** Added `DATABASE_URL` configuration and engine pooling in `DatabaseManager` supporting both SQLite development and production PostgreSQL.
-* **P4-DOC (Selective OCR):** Added `_attempt_selective_ocr` hook in `PDFService` targeting pages below minimum text thresholds.
-* **P4-PROD (Production Docker):** Added multi-stage `Dockerfile` (non-root runner, health checks) and `.dockerignore`.
-* **Frontend Transparency Pass:** Rendered transparent tool badges, uncertainty indicators, and persistent conversation selectors in UI.
+### PHASE 1 — Document Ingestion Replacement (Docling)
+* **Scope:**
+  * Integrate **Docling** as the primary legal document parsing engine.
+  * Preserve physical layout, page numbers (1-indexed), tables, and reading order.
+  * Preserve legal structural headings, articles, clauses, and annexures.
+  * Establish a structured intermediate representation for parsed legal documents.
+  * Add parsing regression tests against complex multi-page contracts.
+* **Deliverable:** `DoclingParser` service outputting structured legal document representations.
+
+---
+
+### PHASE 2 — Structure-Aware Legal Chunking
+* **Scope:**
+  * Implement custom legal-aware chunking preserving legal structural integrity:
+    * Document title, preamble, and contracting parties
+    * Recitals
+    * Numbered clauses and subclauses (`Clause 14`, `Clause 21.2(a)`)
+    * Annexures and Schedules (`ANNEXURE-I`, `Schedule A`)
+    * Definitions block
+    * Signatures and execution block
+  * Attach rich metadata to each chunk: `document_id`, `chunk_id`, `page_number`, `section_title`, `section_number`, `text`, `document_metadata`.
+  * Ensure `ANNEXURE-I` is an independently retrievable chunk unit.
+  * Add chunking unit and regression tests verifying clause boundaries.
+* **Deliverable:** `StructureAwareLegalChunker` producing rich metadata chunks.
+
+---
+
+### PHASE 3 — Gemini Embeddings + Local Qdrant
+* **Scope:**
+  * Implement `GeminiEmbeddingProvider` supporting **Gemini Embedding 2** (`text-embedding-004`).
+  * Configure environment variable loading (`GEMINI_API_KEY`). Never hardcode secrets.
+  * Integrate a local **Qdrant** instance for vector storage.
+  * Index structure-aware chunks with full payload metadata into Qdrant.
+  * Enforce document namespace isolation to prevent multi-document leakage.
+  * Prevent duplicate indexing on repeated uploads (using SHA-256 byte hashes).
+  * Implement re-indexing capabilities when embedding configuration changes.
+* **Deliverable:** Vector indexing pipeline with Gemini Embedding 2 and local Qdrant.
+
+---
+
+### PHASE 4 — Hybrid Retrieval (Dense + BM25 + RRF)
+* **Scope:**
+  * Implement lexical **BM25** index over structure-aware chunks.
+  * Combine Dense Qdrant retrieval + BM25 keyword retrieval.
+  * Implement **Reciprocal Rank Fusion (RRF)**:
+    $$RRF(d) = \sum_{m \in \{dense, bm25\}} \frac{1}{60 + r_m(d)}$$
+  * Add unit tests verifying retrieval for:
+    * Exact legal identifiers (e.g., *"ANNEXURE-I"*, *"Clause 15"*, *"Clause 21"*)
+    * Dates, monetary values, and party names
+    * Semantic conceptual queries (e.g., *"What is the notice period for termination?"*)
+* **Deliverable:** `HybridRetrievalEngine` fusing dense and BM25 candidate lists.
+
+---
+
+### PHASE 5 — Question Routing
+* **Scope:**
+  * Implement dedicated Question Router distinguishing:
+    1. **General Questions:** *"What is the day today?"*, *"What is Python?"*, *"Explain authentication."*
+    2. **Document Questions:** *"What is the notice period?"*, *"Who is the tenant?"*, *"What's in ANNEXURE-I?"*
+  * Eliminate the defect where *"What is the day today?"* enters retrieval and returns *"Not stated in document"*.
+  * General questions bypass document retrieval and route directly to the LLM.
+  * Deterministic rule evaluation first to avoid unnecessary classifier LLM tokens.
+* **Deliverable:** `QuestionRouter` with unit tests for general vs. document inquiries.
+
+---
+
+### PHASE 6 — Gemini Answer Generation & Grounding
+* **Scope:**
+  * Implement `GeminiLLMProvider` using **Gemini 3.8 Flash** as the primary answer generator.
+  * Inject retrieved evidence enclosed in untrusted machine-readable XML fences (`<context_document_data>`).
+  * Enforce strict grounding: answer exclusively from supplied evidence.
+  * Implement structured conceptual answer status: `supported`, `partially_supported`, `insufficient_context`.
+  * Support partial answers for compound queries without inventing missing facts.
+  * Protect against prompt injection embedded within contract texts.
+  * Generate and validate claim-level citations with 1-indexed page and section references.
+* **Deliverable:** Grounded answer generation module with verified citations.
+
+---
+
+### PHASE 7 — Real-Document Validation Suite
+* **Scope:**
+  * Validate end-to-end against real commercial contracts, specifically the real **Rental Agreement** that exposed retrieval failures.
+  * Execute mandatory test battery:
+    1. *"What is this document about?"*
+    2. *"Who is the owner?"*
+    3. *"Who is the tenant?"*
+    4. *"What is the notice period?"*
+    5. *"What happens on early termination?"*
+    6. *"What's mentioned in ANNEXURE-I?"*
+    7. *"What is in this document?"*
+    8. *"Which clauses discuss termination?"*
+    9. *"What is the security deposit?"*
+    10. *"Which page contains ANNEXURE-I?"*
+    11. *"Which date is this document issued?"*
+    12. *"What is the day today?"*
+  * For every test case, inspect and record the full trace:
+    $$\text{Question} \to \text{Route} \to \text{Retrieved Chunks} \to \text{Section} \to \text{Page} \to \text{Scores} \to \text{Final Context} \to \text{Answer} \to \text{Citations}$$
+  * Verify success by inspecting evidence content, not merely checking for HTTP 200.
+* **Deliverable:** Real-document validation report with verified chunk traces.
+
+---
+
+### PHASE 8 — Retrieval & Answer Evaluation Benchmark
+* **Scope:**
+  * Expand the offline evaluation suite with real failure cases and edge cases.
+  * Measure metrics independently across retrieval and generation:
+    * Retrieval Recall & Precision
+    * Retrieval Relevance
+    * Answer Grounding & Correctness
+    * Citation Correctness (claim maps to supporting chunk)
+    * Refusal Precision (refuses only when truly absent)
+    * Latency & Token Usage
+  * Never use LLM answer generation alone to assess retrieval quality.
+* **Deliverable:** Multi-metric offline evaluation harness.
+
+---
+
+### PHASE 9 — Reranking (DEFERRED)
+* **Scope:**
+  * Explicitly marked as **DEFERRED**.
+  * Revisit local cross-encoder reranking only after the Phase 1–8 hybrid baseline is proven and validated.
+  * Reason: Introducing a reranker before proving basic hybrid retrieval adds unnecessary debugging opacity.
+
+---
+
+### PHASE 10 — Production Hardening
+* **Scope:**
+  * Multi-turn conversational retrieval and entity resolution.
+  * Adversarial prompt injection stress tests.
+  * Concurrency and SQLite/PostgreSQL connection pooling under load.
+  * Production packaging and UI polish.
+* **Deliverable:** Production-hardened containerized application.
+
+---
+
+## 3. Acceptance Criteria
+
+The new RAG implementation is considered successful **ONLY** when all of the following conditions are met:
+
+1. **Relevant Evidence Retrieval:** Both dense and lexical retrieval channels surface topically relevant document passages.
+2. **ANNEXURE-I Resolution:** Questions targeting *"ANNEXURE-I"* successfully retrieve the annexure section, even if semantic similarity alone is low.
+3. **Exact Clause Retrieval:** Inquiries targeting specific clauses (e.g., *"Clause 15"*, *"Clause 21"*) retrieve the exact numbered provisions.
+4. **Conceptual Semantic Retrieval:** Conceptual inquiries (e.g., notice period, termination remedies) retrieve relevant clauses regardless of wording variations.
+5. **Accurate Question Routing:** General inquiries (*"What is the day today?"*, *"What is Python?"*) do not trigger document retrieval or output false document refusals.
+6. **Strict Evidence Grounding:** Answers are factually grounded in retrieved chunks; unsupported facts are not fabricated.
+7. **No Unsupported Claims:** The model does not invent terms not present in the contract.
+8. **Citation Precision:** Citations correspond directly to verifiable supporting chunks with accurate 1-indexed page and section references.
+9. **Document Isolation:** Multi-document environments maintain strict isolation without context bleeding.
+10. **API Compatibility:** Existing endpoints (`/api/documents/upload`, `/api/chat`, `/api/conversations`) maintain contract integrity.
+11. **Preservation of Working Infrastructure:** Non-RAG components (database persistence, session tracking, frontend layout) are preserved.

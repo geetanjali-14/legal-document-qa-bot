@@ -320,6 +320,8 @@ function showChatWorkspace() {
 }
 
 function showDocumentsView() {
+  closeSourceInspector();
+  closeDocDropdown();
   if (qaWorkspace) qaWorkspace.hidden = true;
   if (documentsView) documentsView.hidden = false;
   if (navChatBtn) navChatBtn.classList.remove("active");

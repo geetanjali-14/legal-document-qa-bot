@@ -203,18 +203,37 @@ docker run -p 8000:8000 \
 
 Healthcheck is actively monitored at `/api/health`.
 
+## Project Status & Architecture Direction
+
+> **Current Status:** Functional MVP with a known RAG correctness/reliability gap on complex legal documents.  
+> **Current Priority:** Implement and verify the target Hybrid RAG Core inside the existing application (see [docs/DEVELOPMENT_PLAN.md](file:///home/rails/Work/Legal%20QA%20chatbot/docs/DEVELOPMENT_PLAN.md)).
+
+The target production pipeline combines:
+- **Parsing:** Docling (replacing line-by-line PyMuPDF)
+- **Chunking:** Custom structure-aware legal chunking (preserving titles, parties, recitals, clauses, annexures, definitions)
+- **Embeddings:** Gemini Embedding 2 as primary dense provider
+- **Vector DB:** Qdrant (local instance for development)
+- **Keyword Retrieval:** BM25 lexical index
+- **Hybrid Fusion:** Reciprocal Rank Fusion (RRF)
+- **Question Routing:** Deterministic & classified routing (general queries bypass document retrieval, eliminating false refusals)
+- **LLM Generation:** Gemini 3.8 Flash as primary provider, with strict evidence grounding and structured answer status
+- **Reranking:** Explicitly deferred until the hybrid baseline is verified
+
 ## Default Configuration Notes
 
-The app defaults to:
+The app supports configurable providers via environment variables:
 
-- `LLM_PROVIDER=mock` (supports `mock`, `openai`, `gemini`)
-- `EMBEDDING_PROVIDER=tfidf` (supports `tfidf`, `fastembed`, `openai`)
+- `LLM_PROVIDER=gemini` (supports `gemini` [Gemini 3.8 Flash primary], `openai`, and `mock` for testing)
+- `EMBEDDING_PROVIDER=gemini` (supports `gemini` [Gemini Embedding 2 primary], `fastembed`, `tfidf` [legacy])
+- `QDRANT_URL=http://localhost:6333` (local Qdrant vector database)
 - `DATABASE_URL=""` (defaults to safe SQLite with WAL mode at `data/legal_qa.db`; compatible with PostgreSQL in production)
+
+All API keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`) must be set via environment variables.
 
 ## Additional Docs
 
 The repo contains comprehensive documentation:
 
-- [docs/PRD.md](docs/PRD.md) - Product Requirements Document covering milestones P0 through P4.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - System architecture, agent orchestrator, determinism tools, and security boundaries.
-- [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md) - Development plan, execution status, and verification metrics.
+- [docs/PRD.md](file:///home/rails/Work/Legal%20QA%20chatbot/docs/PRD.md) - Product Requirements Document (v4.0.0).
+- [docs/ARCHITECTURE.md](file:///home/rails/Work/Legal%20QA%20chatbot/docs/ARCHITECTURE.md) - Target System Architecture & Retrieval Pipeline (v4.0.0).
+- [docs/DEVELOPMENT_PLAN.md](file:///home/rails/Work/Legal%20QA%20chatbot/docs/DEVELOPMENT_PLAN.md) - Phased Implementation Roadmap & Validation Plan (Phases 0–10).
