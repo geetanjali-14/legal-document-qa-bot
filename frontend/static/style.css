@@ -2262,3 +2262,226 @@ a:focus-visible,
   }
 }
 
+
+/* ==========================================================================
+   Accordion & Dialog Enhancements
+   ========================================================================== */
+.accordion-header {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.accordion-arrow {
+  display: inline-block;
+  font-size: 0.8rem;
+  transition: transform 0.2s ease;
+  color: var(--blue-600);
+}
+.accordion-header[aria-expanded="true"] .accordion-arrow {
+  transform: rotate(180deg);
+}
+.accordion-body[hidden] {
+  display: none !important;
+}
+.accordion-body {
+  margin-top: 10px;
+}
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Centered PDF Modal */
+.pdf-modal {
+  width: min(92vw, 1000px);
+  height: min(88vh, 850px);
+  max-width: 1000px;
+  max-height: 850px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.25);
+  padding: 0;
+  overflow: hidden;
+  margin: auto;
+}
+.pdf-modal::backdrop,
+.confirm-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+}
+.modal-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: #f8fafc;
+}
+.modal-title-group h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--ink-900);
+  margin: 0;
+}
+.pdf-modal-body {
+  height: calc(100% - 62px);
+  width: 100%;
+  padding: 0;
+  background: #525659;
+}
+.pdf-modal-body iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+/* Confirm Dialogs */
+.confirm-dialog {
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  padding: 0;
+  width: min(90vw, 480px);
+  margin: auto;
+}
+.confirm-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+.dialog-cancel-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  border: 1px solid var(--border-subtle);
+  color: var(--ink-700);
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.dialog-secondary-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--blue-50);
+  border: 1px solid var(--blue-200);
+  color: var(--blue-700);
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.dialog-confirm-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--blue-600);
+  border: 1px solid var(--blue-600);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.dialog-danger-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #ef4444;
+  border: 1px solid #dc2626;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+/* Corpus View in main */
+.corpus-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 28px 32px;
+  background: var(--bg-surface);
+  overflow-y: auto;
+}
+.corpus-view[hidden] {
+  display: none !important;
+}
+.corpus-view-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.corpus-search-bar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.corpus-search-bar input {
+  flex: 1;
+  padding: 10px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+.corpus-results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.corpus-result-card {
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.corpus-result-meta {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--blue-600);
+  margin-bottom: 6px;
+}
+.corpus-result-text {
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--ink-800);
+}
+
+/* Clean Answer & Simple Source Control */
+.source-toggle-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--blue-600);
+  background: rgba(37, 99, 235, 0.08);
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(37, 99, 235, 0.16);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.source-toggle-link:hover {
+  background: rgba(37, 99, 235, 0.14);
+}
+
+/* Fix sidebar scrolling & accordion overflow */
+.accordion-card {
+  min-height: auto !important;
+  max-height: none !important;
+  padding: 14px 16px !important;
+  overflow: visible !important;
+}
+.accordion-body {
+  max-height: 380px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.sidebar {
+  overflow-y: auto !important;
+}

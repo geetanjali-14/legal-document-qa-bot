@@ -37,30 +37,38 @@
           <span>Upload Document</span>
         </button>
 
-        <section class="documents-card">
-          <div class="section-title">
+        <section class="accordion-card documents-card" id="docsCard">
+          <div class="section-title accordion-header" id="docsHeader" role="button" tabindex="0" aria-expanded="false" aria-controls="docsBody">
             <div>
               <span class="section-kicker">EVIDENCE CORPUS</span>
-              <h2>Indexed documents</h2>
+              <h2>Indexed documents <span class="accordion-arrow">▾</span></h2>
             </div>
-            <button id="refreshDocsBtn" class="icon-btn" type="button" title="Refresh documents" aria-label="Refresh documents">↻</button>
+            <div class="section-actions" onclick="event.stopPropagation()">
+              <button id="refreshDocsBtn" class="icon-btn" type="button" title="Refresh documents" aria-label="Refresh documents">↻</button>
+            </div>
           </div>
-          <div class="corpus-count"><strong id="indexedCount">0</strong><span>Indexed</span></div>
-          <div id="documentsList" class="documents-list">
-            <p class="empty-text">No documents in this corpus yet.</p>
+          <div class="accordion-body" id="docsBody" hidden>
+            <div class="corpus-count"><strong id="indexedCount">0</strong><span>Indexed</span></div>
+            <div id="documentsList" class="documents-list">
+              <p class="empty-text">No documents in this corpus yet.</p>
+            </div>
           </div>
         </section>
 
-        <section class="conversations-card">
-          <div class="section-title">
+        <section class="accordion-card conversations-card" id="convsCard">
+          <div class="section-title accordion-header" id="convsHeader" role="button" tabindex="0" aria-expanded="false" aria-controls="convsBody">
             <div>
               <span class="section-kicker">CONSULTATION THREADS</span>
-              <h2>Conversations</h2>
+              <h2>Conversations <span class="accordion-arrow">▾</span></h2>
             </div>
-            <button id="newChatBtn" class="icon-btn" type="button" title="New conversation" aria-label="Start new conversation">+</button>
+            <div class="section-actions" onclick="event.stopPropagation()">
+              <button id="newChatBtn" class="icon-btn" type="button" title="New conversation" aria-label="Start new conversation">+</button>
+            </div>
           </div>
-          <div id="conversationsList" class="conversations-list">
-            <p class="empty-text">No active threads.</p>
+          <div class="accordion-body" id="convsBody" hidden>
+            <div id="conversationsList" class="conversations-list">
+              <p class="empty-text">No active threads.</p>
+            </div>
           </div>
         </section>
 
@@ -118,9 +126,9 @@
                 <h3 id="inquiryHeading">Begin with a question</h3>
               </div>
               <div class="starter-list">
-                <button type="button" class="question-suggestion" data-question="What obligations does this document describe?" disabled>What obligations does this document describe?<span aria-hidden="true">↗</span></button>
-                <button type="button" class="question-suggestion" data-question="What dates or notice periods are stated?" disabled>What dates or notice periods are stated?<span aria-hidden="true">↗</span></button>
-                <button type="button" class="question-suggestion" data-question="Which parties and responsibilities are identified?" disabled>Which parties and responsibilities are identified?<span aria-hidden="true">↗</span></button>
+                <button type="button" class="question-suggestion" data-question="What obligations does this document describe?" disabled>What obligations does this document describe?</button>
+                <button type="button" class="question-suggestion" data-question="What dates or notice periods are stated?" disabled>What dates or notice periods are stated?</button>
+                <button type="button" class="question-suggestion" data-question="Which parties and responsibilities are identified?" disabled>Which parties and responsibilities are identified?</button>
               </div>
             </section>
           </section>
@@ -131,7 +139,7 @@
             <label class="input-context" for="questionInput"><span aria-hidden="true">▤</span><span id="inputDocName">Document context unavailable</span></label>
             <div class="input-compose">
               <textarea id="questionInput" placeholder="Select a document before asking a question..." disabled autocomplete="off" rows="2" maxlength="1500" aria-label="Ask a question about the selected legal document"></textarea>
-              <button type="submit" id="sendBtn" disabled aria-label="Send question"><span>Ask</span><span aria-hidden="true">→</span></button>
+              <button type="submit" id="sendBtn" disabled aria-label="Send question"><span>Ask</span></button>
             </div>
           </form>
           <div class="input-footer">
@@ -140,6 +148,25 @@
           </div>
         </div>
       </main>
+
+      <!-- Evidence Corpus Search & Exploration View (Navbar View) -->
+      <section class="corpus-view" id="corpusView" hidden aria-label="Evidence Corpus Search">
+        <div class="corpus-view-header">
+          <div>
+            <span class="section-kicker">ENTERPRISE REPOSITORY</span>
+            <h2>Evidence Corpus Search</h2>
+            <p class="subtitle">Search retrieved passages and inspect indexed evidentiary chunks across your repository.</p>
+          </div>
+          <button type="button" class="secondary-action" id="closeCorpusViewBtn">Back to QA Chat</button>
+        </div>
+        <div class="corpus-search-bar">
+          <input type="text" id="corpusSearchInput" placeholder="Search across evidentiary passages and clauses..." aria-label="Search corpus evidence" />
+          <button type="button" id="corpusSearchBtn" class="primary-btn">Search</button>
+        </div>
+        <div class="corpus-results" id="corpusResults">
+          <p class="empty-text">Enter a query above to search verified evidentiary chunks.</p>
+        </div>
+      </section>
 
       <aside class="source-inspector" id="sourceInspector" hidden aria-label="Source context inspection" aria-hidden="true">
         <div class="inspector-header">
@@ -155,24 +182,79 @@
         </div>
         <div class="source-excerpt-label">VERIFIED EXCERPT</div>
         <blockquote id="sourceExcerpt" class="source-excerpt">Select a citation to inspect its returned excerpt.</blockquote>
-        <p class="inspector-note">This view contains the excerpt supplied with the citation. Full-page PDF navigation is not available in the current application.</p>
+        <p class="inspector-note">This view contains the excerpt supplied with the citation.</p>
       </aside>
     </div>
 
+    <!-- Upload Dialog -->
     <dialog class="upload-dialog" id="uploadDialog" aria-labelledby="uploadDialogTitle">
       <form method="dialog" class="dialog-chrome"><button type="submit" class="icon-btn" aria-label="Close upload dialog">×</button></form>
       <div class="dialog-content">
         <span class="section-kicker">EVIDENCE INTAKE</span>
         <h2 id="uploadDialogTitle">Upload a legal document</h2>
-        <p>Upload a PDF to index its contents for document-grounded questions.</p>
+        <p>Upload a PDF or image document (PNG, JPG, JPEG, WEBP, TIFF) to index its contents.</p>
         <label class="drop-zone" id="dropZone" for="fileInput">
-          <input type="file" id="fileInput" accept="application/pdf,.pdf" aria-label="Choose a PDF document" />
+          <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.webp,.tiff" aria-label="Choose a legal document or image" />
           <span class="upload-icon" aria-hidden="true">↑</span>
-          <strong>Drop your legal PDF here</strong>
+          <strong>Drop your legal document here</strong>
           <span>or browse files on this device</span>
-          <small>PDF documents only</small>
+          <small>PDF and images (PNG, JPG, WEBP, TIFF)</small>
         </label>
-        <div class="dialog-footnote"><span aria-hidden="true">i</span>Document processing runs through the existing indexing service.</div>
+        <div class="dialog-footnote"><span aria-hidden="true">i</span>Document processing runs through the existing indexing and OCR service.</div>
+      </div>
+    </dialog>
+
+    <!-- PDF & Document Centered Modal -->
+    <dialog class="pdf-modal" id="pdfModal" aria-labelledby="pdfModalTitle">
+      <div class="modal-chrome">
+        <div class="modal-title-group">
+          <span class="section-kicker">DOCUMENT VIEWER</span>
+          <h2 id="pdfModalTitle">Document Preview</h2>
+        </div>
+        <button type="button" class="icon-btn modal-close-btn" id="pdfModalCloseBtn" aria-label="Close document viewer">×</button>
+      </div>
+      <div class="modal-content pdf-modal-body">
+        <iframe id="pdfFrame" src="about:blank" title="Document PDF Preview"></iframe>
+      </div>
+    </dialog>
+
+    <!-- Document Switch Confirmation Dialog -->
+    <dialog class="confirm-dialog" id="docSwitchDialog" aria-labelledby="docSwitchTitle">
+      <div class="dialog-content">
+        <span class="section-kicker">CONTEXT BOUNDARY</span>
+        <h2 id="docSwitchTitle">Switch Document Context?</h2>
+        <p id="docSwitchDesc">This conversation is currently associated with <strong id="switchFromDocName">Doc A</strong>. Switching to <strong id="switchToDocName">Doc B</strong> will change the retrieval context.</p>
+        <div class="confirm-actions">
+          <button type="button" class="dialog-cancel-btn" id="switchCancelBtn">Cancel</button>
+          <button type="button" class="dialog-secondary-btn" id="switchKeepChatBtn">Switch in Current Chat</button>
+          <button type="button" class="dialog-confirm-btn" id="switchNewChatBtn">Start New Conversation</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Document Delete Confirmation Dialog -->
+    <dialog class="confirm-dialog" id="docDeleteDialog" aria-labelledby="docDeleteTitle">
+      <div class="dialog-content">
+        <span class="section-kicker">PERMANENT ACTION</span>
+        <h2 id="docDeleteTitle">Delete Document?</h2>
+        <p>Are you sure you want to delete <strong id="deleteDocName">this document</strong> and all its indexed vector chunks?</p>
+        <div class="confirm-actions">
+          <button type="button" class="dialog-cancel-btn" id="deleteDocCancelBtn">Cancel</button>
+          <button type="button" class="dialog-danger-btn" id="deleteDocConfirmBtn">Delete Document</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Conversation Delete Confirmation Dialog -->
+    <dialog class="confirm-dialog" id="convDeleteDialog" aria-labelledby="convDeleteTitle">
+      <div class="dialog-content">
+        <span class="section-kicker">PERMANENT ACTION</span>
+        <h2 id="convDeleteTitle">Delete Conversation?</h2>
+        <p>Are you sure you want to delete thread <strong id="deleteConvTitle">this conversation</strong>?</p>
+        <div class="confirm-actions">
+          <button type="button" class="dialog-cancel-btn" id="deleteConvCancelBtn">Cancel</button>
+          <button type="button" class="dialog-danger-btn" id="deleteConvConfirmBtn">Delete Conversation</button>
+        </div>
       </div>
     </dialog>
   </div>

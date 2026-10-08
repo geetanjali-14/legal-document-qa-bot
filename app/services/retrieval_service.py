@@ -17,7 +17,8 @@ STOPWORDS = {
     "those", "am", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "having", "do", "does", "did", "doing", "would",
     "should", "could", "ought", "i", "you", "he", "she", "it", "we", "they",
-    "if", "as", "than", "so", "can", "will", "just", "under", "per"
+    "if", "as", "than", "so", "can", "will", "just", "under", "per",
+    "occurs", "occur", "happens", "happen"
 }
 
 

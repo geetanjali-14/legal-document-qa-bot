@@ -141,21 +141,77 @@ class AgentOrchestrator:
         # Case F: Substantive EVIDENCE_SEARCH (or CROSS_SECTION / STRUCTURE fallback)
         return self._handle_evidence_search(document_id, rewritten_query, audit_trace, t_start, req_id, top_k, history)
 
+    def _extract_legal_context_topic(self, user_turn: Optional[str], asst_turn: Optional[str]) -> str:
+        """
+        Extracts the primary legal topic or subject matter from preceding turns.
+        Grounded in defined terms, clauses, or key legal topics.
+        """
+        user_str = user_turn or ""
+        asst_str = asst_turn or ""
+        combined = f"{user_str} {asst_str}"
+
+        # 1. Check for specific legal concept phrases in order of priority
+        concept_patterns = [
+            (r"\b(early\s+terminat\w*)\b", "early termination"),
+            (r"\b(terminat\w*)\b", "early termination"),
+            (r"\b(governing\s+law)\b", "governing law"),
+            (r"\b(indemnif\w*)\b", "indemnification"),
+            (r"\b(insur\w*)\b", "insurance"),
+            (r"\b(payment\w*|allowable\s+costs|compensation)\b", "payment"),
+            (r"\b(confidential\w*|non-disclosure)\b", "confidentiality"),
+            (r"\b(intellectual\s+property)\b", "intellectual property"),
+            (r"\b(default|breach)\b", "default"),
+            (r"\b(cure\s+period)\b", "cure period"),
+            (r"\b(notice\s+period)\b", "notice period"),
+            (r"\b(holdover\s+damages)\b", "holdover damages")
+        ]
+        for cp, canon in concept_patterns:
+            if re.search(cp, user_str, re.IGNORECASE):
+                return canon
+
+        for cp, canon in concept_patterns:
+            if re.search(cp, combined, re.IGNORECASE):
+                return canon
+
+        # 2. Extract section or clause name if present
+        sec_m = re.findall(r'(?:Section\s+[\d\.]+|\d+\.\s+[A-Za-z\s]+)', combined, re.IGNORECASE)
+        if sec_m:
+            return sec_m[0].strip()
+
+        # 3. Clean user query subject if short question
+        clean_user = user_str.lower()
+        for prefix in [
+            "what is the notice period for",
+            "what is the",
+            "what are the",
+            "who is responsible for",
+            "who can initiate",
+            "tell me about",
+            "how does",
+            "can they"
+        ]:
+            if clean_user.startswith(prefix):
+                clean_user = clean_user[len(prefix):].strip()
+                break
+        clean_user = re.sub(r'[^\w\s-]', '', clean_user).strip()
+        words = clean_user.split()
+        if 1 <= len(words) <= 4:
+            return " ".join(words)
+
+        return ""
+
     def _contextualize_query(self, query: str, history: Optional[List[Message]]) -> str:
         """
-        Lightweight pronoun/follow-up contextualizer inspecting the last conversation turns.
-        Preserves document scope and bounds.
+        Multi-turn conversational contextualizer inspecting preceding conversation turns.
+        Resolves pronouns (it, that, this, they), event references (occurs, happens, afterward),
+        and clause/provision follow-ups to grounded legal queries without expanding scope.
         """
         if not history or len(history) < 2:
             return query
 
         q_lower = query.lower()
-        follow_up_cues = ["previous clause", "the former", "that section", "what about it", "tell me more", "how about that"]
-        needs_context = any(cue in q_lower for cue in follow_up_cues) or q_lower.startswith(("and ", "what about ", "why "))
 
-        if not needs_context:
-            return query
-
+        # Extract last user and assistant turns
         last_user_turn = None
         last_assistant_turn = None
         for m in reversed(history):
@@ -166,10 +222,10 @@ class AgentOrchestrator:
             if last_user_turn and last_assistant_turn:
                 break
 
+        # Check for previous clause / former / preceding references
         if "previous clause" in q_lower or "former" in q_lower or "preceding" in q_lower:
             sec_matches = []
             if last_assistant_turn:
-                # Match "Section 2" or "2. Termination"
                 sec_matches = re.findall(r'(?:Section\s+[\d\.]+|\d+\.\s+[A-Za-z]+)', last_assistant_turn, re.IGNORECASE)
             if sec_matches:
                 enriched = f"{query} preceding provision related to {sec_matches[0]}"
@@ -180,7 +236,44 @@ class AgentOrchestrator:
                 logger.info(f"[AgentOrchestrator] Contextualized query: '{query}' -> '{enriched}'")
                 return enriched
 
-        if last_user_turn and len(query.split()) <= 6:
+        # Extract primary antecedent topic
+        topic = self._extract_legal_context_topic(last_user_turn, last_assistant_turn)
+
+        # Pronoun & event resolution patterns
+        pronoun_patterns = [
+            (r"\bwho\s+can\s+initiate\s+(?:it|this|that)\b", f"who can initiate {topic}"),
+            (r"\bwho\s+can\s+terminate\s+(?:it|this|that)\b", f"who can terminate {topic}"),
+            (r"\bwhat\s+happens\s+after\s+(?:that|it)(?:\s+occurs|\s+happens)?\b", f"what happens after {topic}"),
+            (r"\bafter\s+(?:that|it)\s+(?:occurs|happens)\b", f"after {topic}"),
+            (r"\bafter\s+(?:that|it)\b", f"after {topic}"),
+            (r"\bwhen\s+(?:that|it)\s+(?:occurs|happens)\b", f"when {topic}"),
+            (r"\bdoes\s+that\s+obligation\s+continue\s+afterward\b", f"does {topic} continue afterward"),
+            (r"\bdoes\s+(?:that|it)\s+continue\b", f"does {topic} continue"),
+            (r"\bcan\s+they\s+terminate\b", f"can they terminate the agreement {topic}"),
+            (r"\bwhen\s+must\s+that\s+payment\s+be\s+made\b", f"when must {topic} allowable costs payment be made"),
+            (r"\bhow\s+long\s+does\s+it\s+last\b", f"how long does {topic} last"),
+            (r"\bwhat\s+is\s+its\s+duration\b", f"what is duration of {topic}"),
+            (r"\babout\s+it\b", f"about {topic}"),
+            (r"\babout\s+that\b", f"about {topic}"),
+            (r"\babout\s+this\b", f"about {topic}"),
+        ]
+
+        if topic:
+            for pat, repl in pronoun_patterns:
+                if re.search(pat, query, re.IGNORECASE):
+                    resolved = re.sub(pat, repl, query, flags=re.IGNORECASE)
+                    logger.info(f"[AgentOrchestrator] Resolved pronoun query: '{query}' -> '{resolved}'")
+                    return resolved
+
+            # Short elliptical follow-up containing "it", "that", "this", "they"
+            if re.search(r"\b(?:it|that|this|they|them|its)\b", q_lower) and len(query.split()) <= 8:
+                resolved = f"{query} regarding {topic}"
+                logger.info(f"[AgentOrchestrator] Enriched elliptical query: '{query}' -> '{resolved}'")
+                return resolved
+
+        # Generic short follow-up fallback
+        follow_up_cues = ["what about it", "tell me more", "how about that"]
+        if (any(cue in q_lower for cue in follow_up_cues) or q_lower.startswith(("and ", "what about ", "why "))) and last_user_turn and len(query.split()) <= 6:
             enriched = f"{query} regarding {last_user_turn}"
             logger.info(f"[AgentOrchestrator] Enriched short follow-up query: '{query}' -> '{enriched}'")
             return enriched
