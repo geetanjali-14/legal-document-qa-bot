@@ -23,6 +23,7 @@ class ConversationModel(Base):
 
     conversation_id = Column(String(36), primary_key=True, default=lambda: f"conv_{uuid.uuid4().hex[:16]}")
     title = Column(String(255), nullable=False, default="New Legal Consultation")
+    session_id = Column(String(64), nullable=True, index=True)
     document_ids = Column(JSON, nullable=False, default=list)  # Stored as JSON list of doc IDs: ["doc_123"]
     status = Column(String(32), nullable=False, default="active")
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)

@@ -98,10 +98,25 @@ async def ask_question(
     response: Response,
     services: dict = Depends(get_services)
 ):
-    # 1. Establish unique request identifier
+    # 1. Establish unique request identifier and server-validated session
+    from app.core.security import get_or_create_session_id, rate_limiter
+
+    session_id, _ = get_or_create_session_id(raw_request, response)
     client_request_id = raw_request.headers.get("x-request-id") or raw_request.headers.get("X-Request-ID")
     request_id = client_request_id.strip() if client_request_id else f"req_{uuid.uuid4().hex[:16]}"
     response.headers["X-Request-ID"] = request_id
+
+    # 1.5 Enforce rate limiting per session / client IP
+    client_ip = raw_request.client.host if raw_request.client else "unknown"
+    rate_key = f"chat:{session_id}:{client_ip}"
+    allowed, retry_after = rate_limiter.is_allowed(rate_key, max_requests=settings.RATE_LIMIT_CHAT_PER_MINUTE, window_seconds=60)
+    if not allowed:
+        response.headers["Retry-After"] = str(retry_after)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Please wait {retry_after} seconds before asking another question.",
+            headers={"Retry-After": str(retry_after)}
+        )
 
     t_request_start = time.perf_counter()
 
@@ -168,18 +183,24 @@ async def ask_question(
     is_newly_created_conv = False
     if conv_service:
         try:
-            # Defensive validation: verify conversation belongs to requested document_id
+            # Defensive validation: verify conversation belongs to requested document_id and session
             if request.conversation_id:
-                existing_conv = conv_service.get_conversation(request.conversation_id)
-                if not existing_conv:
+                raw_conv = conv_service.repository.get_conversation(request.conversation_id)
+                if not raw_conv:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail=f"Conversation with ID '{request.conversation_id}' was not found."
                     )
-                if has_document and request.document_id not in (existing_conv.document_ids or []):
+                # Session isolation check in DEMO_MODE: prevent cross-session access
+                if settings.DEMO_MODE and raw_conv.session_id and raw_conv.session_id != session_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Conversation with ID '{request.conversation_id}' was not found."
+                    )
+                if has_document and request.document_id not in (raw_conv.document_ids or []):
                     logger.warning(
                         f"[{request_id}] Mismatched document and conversation: conversation {request.conversation_id} "
-                        f"belongs to {existing_conv.document_ids}, not '{request.document_id}'."
+                        f"belongs to {raw_conv.document_ids}, not '{request.document_id}'."
                     )
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -193,7 +214,8 @@ async def ask_question(
 
             conv_resp = conv_service.ensure_conversation_exists(
                 conversation_id=request.conversation_id,
-                document_id=request.document_id if has_document else None
+                document_id=request.document_id if has_document else None,
+                session_id=session_id
             )
             active_conversation_id = conv_resp.conversation_id
             # Retrieve bounded history BEFORE appending current user message

@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
+import hashlib
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -119,6 +120,20 @@ async def lifespan(app: FastAPI):
         risk_analyzer=risk_analyzer
     )
 
+    # Auto-seed curated public demo documents if in DEMO_MODE
+    if settings.DEMO_MODE and settings.DEMO_DOCUMENTS_DIR.exists():
+        logger.info(f"DEMO_MODE is active. Ensuring curated demo documents from {settings.DEMO_DOCUMENTS_DIR} are indexed...")
+        for sample_file in sorted(settings.DEMO_DOCUMENTS_DIR.glob("*.pdf")):
+            try:
+                content = sample_file.read_bytes()
+                h = hashlib.sha256(content).hexdigest()
+                existing = document_service.find_by_content_hash(h)
+                if not existing:
+                    logger.info(f"Indexing demo sample document: {sample_file.name}")
+                    document_service.process_document(content, sample_file.name)
+            except Exception as seed_err:
+                logger.warning(f"Could not index demo document {sample_file.name}: {seed_err}")
+
     # Sync vocabulary provider with any pre-loaded vector store chunks across restarts
     if hasattr(embedding_service.provider, "fit_document"):
         for doc_id, doc_chunks in vector_store.chunks_by_doc.items():
@@ -166,6 +181,9 @@ app = FastAPI(
     title=settings.APP_NAME,
     description="Production-grade Legal Document Q&A with Strict Grounding and Citations",
     version="1.0.0",
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    openapi_url="/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan
 )
 
@@ -173,13 +191,15 @@ app = FastAPI(
 raw_cors = settings.CORS_ALLOWED_ORIGINS.strip()
 if raw_cors == "*":
     cors_origins = ["*"]
+    allow_creds = False
 else:
     cors_origins = [orig.strip() for orig in raw_cors.split(",") if orig.strip()]
+    allow_creds = True
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_credentials=True,
+    allow_credentials=allow_creds,
     allow_methods=["*"],
     allow_headers=["*"],
 )

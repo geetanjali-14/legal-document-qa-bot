@@ -110,7 +110,8 @@ class ConversationService:
         self,
         document_id: Optional[str] = None,
         document_ids: Optional[List[str]] = None,
-        title: Optional[str] = None
+        title: Optional[str] = None,
+        session_id: Optional[str] = None
     ) -> ConversationResponse:
         docs = list(document_ids or [])
         if document_id and document_id not in docs:
@@ -118,7 +119,8 @@ class ConversationService:
 
         conv = self.repository.create_conversation(
             title=title,
-            document_ids=docs
+            document_ids=docs,
+            session_id=session_id
         )
         return self._to_conversation_response(conv, message_count=0)
 
@@ -138,8 +140,19 @@ class ConversationService:
             messages=messages
         )
 
-    def list_conversations(self, limit: int = 50, offset: int = 0, include_empty: bool = True) -> List[ConversationResponse]:
-        items = self.repository.list_conversations(limit=limit, offset=offset, include_empty=include_empty)
+    def list_conversations(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        include_empty: bool = True,
+        session_id: Optional[str] = None
+    ) -> List[ConversationResponse]:
+        items = self.repository.list_conversations(
+            limit=limit,
+            offset=offset,
+            include_empty=include_empty,
+            session_id=session_id
+        )
         return [self._to_conversation_response(conv, count) for conv, count in items]
 
     def cleanup_empty_conversations(self) -> int:
@@ -204,17 +217,18 @@ class ConversationService:
         messages = self.repository.get_messages(conversation_id)
         return self._to_conversation_response(conv, message_count=len(messages))
 
-    def delete_conversation(self, conversation_id: str, document_id: str) -> bool:
-        return self.repository.delete_conversation(conversation_id, document_id)
+    def delete_conversation(self, conversation_id: str, document_id: Optional[str] = None, session_id: Optional[str] = None) -> bool:
+        return self.repository.delete_conversation(conversation_id, document_id=document_id, session_id=session_id)
 
-    def delete_all_conversations(self, document_id: Optional[str] = None) -> int:
-        return self.repository.delete_all_conversations(document_id=document_id)
+    def delete_all_conversations(self, document_id: Optional[str] = None, session_id: Optional[str] = None) -> int:
+        return self.repository.delete_all_conversations(document_id=document_id, session_id=session_id)
 
     def ensure_conversation_exists(
         self,
         conversation_id: Optional[str],
         document_id: Optional[str] = None,
-        title: Optional[str] = None
+        title: Optional[str] = None,
+        session_id: Optional[str] = None
     ) -> ConversationResponse:
         """
         Validates provided conversation_id or automatically creates a new conversation
@@ -237,7 +251,8 @@ class ConversationService:
         # Create new conversation automatically
         return self.create_conversation(
             document_id=document_id,
-            title=title or (f"Consultation for {document_id}" if document_id else "General Consultation")
+            title=title or (f"Consultation for {document_id}" if document_id else "General Consultation"),
+            session_id=session_id
         )
 
     def get_bounded_history(

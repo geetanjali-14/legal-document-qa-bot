@@ -13,6 +13,7 @@ async def health_check():
         data={
             "status": "healthy",
             "app_name": settings.APP_NAME,
+            "demo_mode": settings.DEMO_MODE,
             "llm_provider": settings.LLM_PROVIDER,
             "embedding_provider": settings.EMBEDDING_PROVIDER,
             "supported_document_formats": list(settings.SUPPORTED_DOCUMENT_EXTENSIONS),

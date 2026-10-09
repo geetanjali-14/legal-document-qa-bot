@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     CORS_ALLOWED_ORIGINS: str = "*"
 
+    # Demo mode & Public safety
+    DEMO_MODE: bool = False
+    DEMO_DOCUMENTS_DIR: Path = Path("documents")
+    SESSION_SECRET: str = "dev-insecure-secret-change-in-production"
+    RATE_LIMIT_CHAT_PER_MINUTE: int = 15
+    RATE_LIMIT_CONV_PER_MINUTE: int = 30
+
     # Ingestion & storage
     UPLOAD_DIR: Path = Path("data/uploads")
     VECTOR_STORE_DIR: Path = Path("data/vector_store")

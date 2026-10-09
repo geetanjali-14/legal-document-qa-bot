@@ -2,7 +2,14 @@ import logging
 import sys
 
 
-def setup_logging(debug: bool = False) -> logging.Logger:
+def setup_logging(debug: bool | None = None) -> logging.Logger:
+    if debug is None:
+        try:
+            from app.core.config import settings
+            debug = settings.DEBUG
+        except Exception:
+            debug = False
+
     level = logging.DEBUG if debug else logging.INFO
     formatter = logging.Formatter(
         "[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s",

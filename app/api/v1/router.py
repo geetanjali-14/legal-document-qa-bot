@@ -115,6 +115,13 @@ async def v1_upload_document(
     Upload and index a legal document synchronously.
     Accepts PDF and supported document/image formats.
     """
+    if settings.DEMO_MODE:
+        return json_error(
+            status.HTTP_403_FORBIDDEN,
+            "DEMO_MODE_RESTRICTION",
+            "Document uploads are disabled in public demo mode."
+        )
+
     if not file.filename:
         return json_error(status.HTTP_400_BAD_REQUEST, "INVALID_FILENAME", "Filename is required.")
 
@@ -202,6 +209,13 @@ async def v1_delete_document(
     doc_service: DocumentService = Depends(get_doc_service)
 ):
     """Delete a document and purge all associated indexed vectors."""
+    if settings.DEMO_MODE:
+        return json_error(
+            status.HTTP_403_FORBIDDEN,
+            "DEMO_MODE_RESTRICTION",
+            "Document deletion is disabled in public demo mode."
+        )
+
     deleted = doc_service.delete_document(document_id)
     if not deleted:
         return json_error(status.HTTP_404_NOT_FOUND, "DOCUMENT_NOT_FOUND", f"Document with ID '{document_id}' not found.")
@@ -302,14 +316,20 @@ async def v1_chat(
 @router.post("/conversations", response_model=V1ConversationResponse, status_code=status.HTTP_201_CREATED)
 async def v1_create_conversation(
     req: V1ConversationCreateRequest,
+    raw_request: Request,
+    response: Response,
     conv_service: ConversationService = Depends(get_conv_service)
 ):
     """Create a persistent conversation session."""
+    from app.core.security import get_or_create_session_id
+    session_id, _ = get_or_create_session_id(raw_request, response)
+
     try:
         conv = conv_service.create_conversation(
             document_id=req.document_id,
             document_ids=req.document_ids,
-            title=req.title
+            title=req.title,
+            session_id=session_id
         )
         return V1ConversationResponse(
             id=conv.conversation_id,
@@ -327,12 +347,18 @@ async def v1_create_conversation(
 
 @router.get("/conversations", response_model=V1ConversationListResponse)
 async def v1_list_conversations(
+    raw_request: Request,
+    response: Response,
     limit: int = 50,
     offset: int = 0,
     conv_service: ConversationService = Depends(get_conv_service)
 ):
     """List conversation sessions."""
-    convs = conv_service.list_conversations(limit=limit, offset=offset)
+    from app.core.security import get_or_create_session_id
+    session_id, _ = get_or_create_session_id(raw_request, response)
+
+    filter_session_id = session_id if settings.DEMO_MODE else None
+    convs = conv_service.list_conversations(limit=limit, offset=offset, session_id=filter_session_id)
     items = [
         V1ConversationResponse(
             id=c.conversation_id,
@@ -351,9 +377,20 @@ async def v1_list_conversations(
 @router.get("/conversations/{conversation_id}", response_model=V1ConversationDetailResponse)
 async def v1_get_conversation(
     conversation_id: str,
+    raw_request: Request,
+    response: Response,
     conv_service: ConversationService = Depends(get_conv_service)
 ):
     """Retrieve full conversation details including messages and source citations."""
+    from app.core.security import get_or_create_session_id
+    session_id, _ = get_or_create_session_id(raw_request, response)
+
+    raw_conv = conv_service.repository.get_conversation(conversation_id)
+    if not raw_conv:
+        return json_error(status.HTTP_404_NOT_FOUND, "CONVERSATION_NOT_FOUND", f"Conversation '{conversation_id}' not found.")
+    if settings.DEMO_MODE and raw_conv.session_id and raw_conv.session_id != session_id:
+        return json_error(status.HTTP_404_NOT_FOUND, "CONVERSATION_NOT_FOUND", f"Conversation '{conversation_id}' not found.")
+
     conv = conv_service.get_conversation(conversation_id)
     if not conv:
         return json_error(status.HTTP_404_NOT_FOUND, "CONVERSATION_NOT_FOUND", f"Conversation '{conversation_id}' not found.")
@@ -394,10 +431,16 @@ async def v1_get_conversation(
 @router.delete("/conversations/{conversation_id}")
 async def v1_delete_conversation(
     conversation_id: str,
+    raw_request: Request,
+    response: Response,
     conv_service: ConversationService = Depends(get_conv_service)
 ):
     """Delete a conversation session."""
-    deleted = conv_service.delete_conversation(conversation_id)
+    from app.core.security import get_or_create_session_id
+    session_id, _ = get_or_create_session_id(raw_request, response)
+
+    filter_session_id = session_id if settings.DEMO_MODE else None
+    deleted = conv_service.delete_conversation(conversation_id, session_id=filter_session_id)
     if not deleted:
         return json_error(status.HTTP_404_NOT_FOUND, "CONVERSATION_NOT_FOUND", f"Conversation '{conversation_id}' not found.")
     return {"success": True, "conversation_id": conversation_id, "message": "Conversation deleted successfully."}

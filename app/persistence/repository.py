@@ -14,20 +14,22 @@ class ConversationRepository:
         self,
         conversation_id: Optional[str] = None,
         title: Optional[str] = None,
-        document_ids: Optional[List[str]] = None
+        document_ids: Optional[List[str]] = None,
+        session_id: Optional[str] = None
     ) -> ConversationModel:
         with self.session_factory() as session:
             doc_ids = document_ids or []
             conv = ConversationModel(
                 title=title or "New Legal Consultation",
-                document_ids=doc_ids
+                document_ids=doc_ids,
+                session_id=session_id
             )
             if conversation_id:
                 conv.conversation_id = conversation_id
             session.add(conv)
             session.commit()
             session.refresh(conv)
-            logger.info(f"Created conversation {conv.conversation_id} with docs {doc_ids}")
+            logger.info(f"Created conversation {conv.conversation_id} with docs {doc_ids} [session={session_id}]")
             return conv
 
     def get_conversation(self, conversation_id: str) -> Optional[ConversationModel]:
@@ -42,10 +44,17 @@ class ConversationRepository:
                 session.expunge_all()
             return conv
 
-    def list_conversations(self, limit: int = 50, offset: int = 0, include_empty: bool = True) -> List[Tuple[ConversationModel, int]]:
+    def list_conversations(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        include_empty: bool = True,
+        session_id: Optional[str] = None
+    ) -> List[Tuple[ConversationModel, int]]:
         """
         Returns list of (ConversationModel, message_count) ordered by updated_at descending.
         When include_empty is False, only returns conversations containing at least one meaningful user message.
+        When session_id is provided, filters strictly by session_id.
         """
         with self.session_factory() as session:
             # Query message count and user message count
@@ -65,6 +74,9 @@ class ConversationRepository:
                 session.query(ConversationModel, func.coalesce(subq.c.msg_count, 0))
                 .outerjoin(subq, ConversationModel.conversation_id == subq.c.conversation_id)
             )
+
+            if session_id is not None:
+                query = query.filter(ConversationModel.session_id == session_id)
 
             if not include_empty:
                 query = query.filter(func.coalesce(subq.c.user_msg_count, 0) > 0)
@@ -195,22 +207,29 @@ class ConversationRepository:
             session.expunge(conv)
             return conv
 
-    def delete_conversation(self, conversation_id: str, document_id: str) -> bool:
+    def delete_conversation(self, conversation_id: str, document_id: Optional[str] = None, session_id: Optional[str] = None) -> bool:
         with self.session_factory() as session:
-            conv = session.query(ConversationModel).filter(
+            query = session.query(ConversationModel).filter(
                 ConversationModel.conversation_id == conversation_id
-            ).first()
-            if not conv or document_id not in (conv.document_ids or []):
+            )
+            if session_id is not None:
+                query = query.filter(ConversationModel.session_id == session_id)
+            conv = query.first()
+            if not conv:
+                return False
+            if document_id and document_id not in (conv.document_ids or []):
                 return False
             session.delete(conv)
             session.commit()
-            logger.info(f"Deleted conversation {conversation_id}")
+            logger.info(f"Deleted conversation {conversation_id} (session={session_id})")
             return True
 
-    def delete_all_conversations(self, document_id: Optional[str] = None) -> int:
-        """Deletes conversations and their messages. If document_id is provided, only deletes chats associated with it."""
+    def delete_all_conversations(self, document_id: Optional[str] = None, session_id: Optional[str] = None) -> int:
+        """Deletes conversations and their messages. Scoped by document_id and session_id if provided."""
         with self.session_factory() as session:
             query = session.query(ConversationModel)
+            if session_id is not None:
+                query = query.filter(ConversationModel.session_id == session_id)
             convs = query.all()
             to_delete = []
             for conv in convs:
@@ -224,7 +243,7 @@ class ConversationRepository:
             for conv in to_delete:
                 session.delete(conv)
             session.commit()
-            logger.info(f"Deleted {count} conversation(s) (document_id filter={document_id})")
+            logger.info(f"Deleted {count} conversation(s) (document_id filter={document_id}, session={session_id})")
             return count
 
     def save_document_profile(

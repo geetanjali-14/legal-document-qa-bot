@@ -51,6 +51,19 @@ class DatabaseManager:
             # Safe table creation (does NOT drop existing data)
             from app.persistence import models  # noqa: F401
             Base.metadata.create_all(bind=self.engine)
+
+            # Defensive migration: Ensure session_id column exists on existing databases
+            try:
+                with self.engine.begin() as conn:
+                    if is_sqlite:
+                        cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(conversations);").fetchall()]
+                        if "session_id" not in cols:
+                            conn.exec_driver_sql("ALTER TABLE conversations ADD COLUMN session_id VARCHAR(64);")
+                            conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_conversations_session_id ON conversations(session_id);")
+                            logger.info("Migrated conversations table: added session_id column.")
+            except Exception as mig_err:
+                logger.warning(f"Session column migration check skipped/warning: {mig_err}")
+
             logger.info(f"Database initialized safely at {self.db_path}")
         except Exception as e:
             logger.error(f"Failed to initialize database at {self.db_path}: {str(e)}")

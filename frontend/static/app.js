@@ -110,11 +110,27 @@ let pendingSwitchDoc = null;
 
 const citationRecords = new WeakMap();
 
+let isDemoMode = false;
+
 // ==========================================
 // Initialization
 // ==========================================
 document.addEventListener("DOMContentLoaded", async () => {
   setupEventListeners();
+
+  try {
+    const healthRes = await fetch("/api/health");
+    if (healthRes.ok) {
+      const hData = await healthRes.json();
+      isDemoMode = Boolean(hData?.data?.demo_mode);
+      if (isDemoMode) {
+        applyDemoModeUI();
+      }
+    }
+  } catch (hErr) {
+    console.warn("Could not check demo status:", hErr);
+  }
+
   await fetchDocuments();
   await fetchConversations();
 
@@ -127,6 +143,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     initNewChatState(null);
   }
 });
+
+function applyDemoModeUI() {
+  if (uploadOpenBtn) uploadOpenBtn.style.display = "none";
+  if (docsViewUploadBtn) docsViewUploadBtn.style.display = "none";
+  if (dropdownUploadBtn) dropdownUploadBtn.style.display = "none";
+  if (deleteAllChatsBtn) deleteAllChatsBtn.style.display = "none";
+  if (batchDeleteDocsBtn) batchDeleteDocsBtn.style.display = "none";
+}
 
 function setupEventListeners() {
   // Navigation between Chat and Documents
@@ -1142,7 +1166,7 @@ function renderDocumentsGrid(docs, filterQuery = "") {
       </div>
       <div class="doc-card-actions">
         <button type="button" class="primary-btn view-doc-action">View</button>
-        <button type="button" class="del-btn-card" title="Delete document" aria-label="Delete ${escapeHtml(name)}">×</button>
+        ${isDemoMode ? "" : `<button type="button" class="del-btn-card" title="Delete document" aria-label="Delete ${escapeHtml(name)}">×</button>`}
       </div>
     `;
 

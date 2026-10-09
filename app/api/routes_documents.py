@@ -25,6 +25,12 @@ async def upload_document(
     file: UploadFile = File(...),
     doc_service: DocumentService = Depends(get_document_service)
 ):
+    if settings.DEMO_MODE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Document uploads are disabled in public demo mode. Please explore the pre-loaded legal sample documents."
+        )
+
     if not file.filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -176,6 +182,12 @@ async def get_document_structure(document_id: str, doc_service: DocumentService 
 
 @router.delete("/{document_id}", response_model=ApiResponse)
 async def delete_document(document_id: str, doc_service: DocumentService = Depends(get_document_service)):
+    if settings.DEMO_MODE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Document deletion is disabled in public demo mode."
+        )
+
     deleted = doc_service.delete_document(document_id)
     if not deleted:
         raise HTTPException(
