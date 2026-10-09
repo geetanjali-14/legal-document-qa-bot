@@ -229,3 +229,193 @@ def test_pdf_upload_handling(mock_httpx_cls, slack_adapter, mock_api_client):
     assert "Pages: 5" in confirmation
     assert "Chunks: 30" in confirmation
 
+
+@patch("httpx.Client")
+def test_dm_upload_and_separate_toplevel_message_followup(mock_httpx_cls, slack_adapter, mock_api_client):
+    """
+    Regression test for reported bug:
+    1. User uploads PDF in DM (top-level message, thread_ts=None, ts="1678900001.01").
+    2. Bot indexes and confirms document context.
+    3. User asks question in a separate top-level DM message (thread_ts=None, ts="1678900005.02").
+    4. Must retrieve the active document ID and pass it to /api/v1/chat.
+    """
+    mock_http = MagicMock()
+    mock_httpx_cls.return_value.__enter__.return_value = mock_http
+    mock_http.get.return_value.status_code = 200
+    mock_http.get.return_value.content = b"%PDF-1.4 mock policy content"
+
+    mock_api_client.upload_document.return_value = {
+        "document_id": "doc_03f8339dc570",
+        "filename": "Annual Increment Policy.pdf",
+        "status": "processed",
+        "page_count": 5,
+        "chunk_count": 37
+    }
+
+    # Step 1: Upload in DM (channel_type="im", no thread_ts, only ts)
+    dm_channel = "D_USER_DIRECT"
+    user_id = "U_EMPLOYEE"
+    say_upload = MagicMock()
+    upload_event = {
+        "channel": dm_channel,
+        "channel_type": "im",
+        "user": user_id,
+        "ts": "1678900001.01",
+        "client_msg_id": "msg_dm_upload",
+        "files": [
+            {
+                "id": "F_POLICY",
+                "name": "Annual Increment Policy.pdf",
+                "filetype": "pdf",
+                "url_private_download": "https://slack.com/files/policy.pdf"
+            }
+        ]
+    }
+    slack_adapter.handle_message_event(upload_event, say_upload, client=MagicMock())
+    assert "doc_03f8339dc570" in say_upload.call_args[1]["text"]
+
+    # Step 2: Separate top-level DM message from same user asking what doc is about
+    # Note: ts is different, thread_ts is None
+    mock_api_client.chat.return_value = {
+        "answer": "This document outlines the guidelines for annual employee increments and merit raises.",
+        "conversation_id": "conv_dm_session_1",
+        "document_id": "doc_03f8339dc570",
+        "sources": [{"page_number": 1, "section": "1. Purpose", "clause_number": "1.1"}]
+    }
+
+    say_q1 = MagicMock()
+    q1_event = {
+        "channel": dm_channel,
+        "channel_type": "im",
+        "user": user_id,
+        "ts": "1678900005.02",  # Different timestamp!
+        "client_msg_id": "msg_dm_q1",
+        "text": "What is this document about?"
+    }
+    slack_adapter.handle_message_event(q1_event, say_q1, client=MagicMock())
+
+    # Verify chat was called WITH the uploaded document_id!
+    mock_api_client.chat.assert_called_once_with(
+        question="What is this document about?",
+        document_id="doc_03f8339dc570",
+        conversation_id=None
+    )
+    answer_text = say_q1.call_args[1]["text"]
+    assert "This document outlines the guidelines" in answer_text
+    assert "*Page 1* — 1. Purpose" in answer_text
+    assert "_Document Context: `doc_03f8339dc570`_" in answer_text
+
+
+def test_thread_replies_and_multiuser_isolation(slack_adapter, mock_api_client):
+    """
+    Verifies:
+    1. Thread replies preserve thread-specific context.
+    2. Other users in the same channel/thread do NOT share context.
+    3. 'clear' removes the context.
+    """
+    channel = "C_LEGAL_TEAM"
+    thread_root = "1678900100.00"
+    user_alice = "U_ALICE"
+    user_bob = "U_BOB"
+
+    # Alice selects document in thread
+    mock_api_client.get_document.return_value = {
+        "document_id": "doc_alice_master_service",
+        "filename": "msa.pdf",
+        "original_filename": "msa.pdf"
+    }
+    say_alice_select = MagicMock()
+    slack_adapter.handle_message_event({
+        "channel": channel,
+        "user": user_alice,
+        "thread_ts": thread_root,
+        "ts": "1678900101.00",
+        "client_msg_id": "msg_alice_sel",
+        "text": "<@U_BOT123> select doc_alice_master_service"
+    }, say_alice_select, client=MagicMock())
+
+    # Alice asks a question in the thread
+    mock_api_client.chat.return_value = {
+        "answer": "Payment terms are Net 30.",
+        "conversation_id": "conv_alice_msa",
+        "document_id": "doc_alice_master_service",
+        "sources": []
+    }
+    say_alice_q = MagicMock()
+    slack_adapter.handle_message_event({
+        "channel": channel,
+        "user": user_alice,
+        "thread_ts": thread_root,
+        "ts": "1678900105.00",
+        "client_msg_id": "msg_alice_q1",
+        "text": "<@U_BOT123> What are the payment terms?"
+    }, say_alice_q, client=MagicMock())
+
+    mock_api_client.chat.assert_called_with(
+        question="What are the payment terms?",
+        document_id="doc_alice_master_service",
+        conversation_id=None
+    )
+
+    # Bob asks in the same thread: Bob has NO document selected!
+    mock_api_client.chat.reset_mock()
+    mock_api_client.chat.return_value = {
+        "answer": "Payment terms define when invoices must be settled.",
+        "conversation_id": "conv_bob_gen",
+        "document_id": None,
+        "sources": []
+    }
+    say_bob_q = MagicMock()
+    slack_adapter.handle_message_event({
+        "channel": channel,
+        "user": user_bob,
+        "thread_ts": thread_root,
+        "ts": "1678900110.00",
+        "client_msg_id": "msg_bob_q1",
+        "text": "<@U_BOT123> Explain payment terms"
+    }, say_bob_q, client=MagicMock())
+
+    # Bob's query must NOT have doc_alice_master_service!
+    mock_api_client.chat.assert_called_with(
+        question="Explain payment terms",
+        document_id=None,
+        conversation_id=None
+    )
+
+    # Alice clears context
+    say_alice_clear = MagicMock()
+    slack_adapter.handle_message_event({
+        "channel": channel,
+        "user": user_alice,
+        "thread_ts": thread_root,
+        "ts": "1678900120.00",
+        "client_msg_id": "msg_alice_clr",
+        "text": "<@U_BOT123> clear"
+    }, say_alice_clear, client=MagicMock())
+    assert "Active document and conversation session cleared" in say_alice_clear.call_args[1]["text"]
+
+    # Alice's subsequent query now has no document
+    mock_api_client.chat.reset_mock()
+    mock_api_client.chat.return_value = {
+        "answer": "General legal information.",
+        "conversation_id": "conv_alice_after_clear",
+        "document_id": None,
+        "sources": []
+    }
+    say_alice_after = MagicMock()
+    slack_adapter.handle_message_event({
+        "channel": channel,
+        "user": user_alice,
+        "thread_ts": thread_root,
+        "ts": "1678900125.00",
+        "client_msg_id": "msg_alice_q2",
+        "text": "<@U_BOT123> What is an SLA?"
+    }, say_alice_after, client=MagicMock())
+
+    mock_api_client.chat.assert_called_with(
+        question="What is an SLA?",
+        document_id=None,
+        conversation_id=None
+    )
+
+

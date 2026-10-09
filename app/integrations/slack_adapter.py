@@ -131,13 +131,13 @@ class SlackAdapter:
         # 6. Chat / Ask Question (Phase A & B)
         self._handle_chat_query(cleaned_text, channel, user, team, thread_ts, reply_ts, say)
 
-    def _handle_list_documents(self, channel: str, thread_ts: str, say):
+    def _handle_list_documents(self, channel: str, reply_ts: str, say):
         try:
             docs = self.api_client.list_documents()
             if not docs:
                 say(
                     text="No documents have been indexed yet. You can upload a PDF right here in Slack!",
-                    thread_ts=thread_ts
+                    thread_ts=reply_ts
                 )
                 return
 
@@ -150,9 +150,9 @@ class SlackAdapter:
                 msg_lines.append(f"• `{doc_id}`: *{filename}* ({pages} pages, {chunks} chunks)")
 
             msg_lines.append("\nTo query one, type `select <document_id>`.")
-            say(text="\n".join(msg_lines), thread_ts=thread_ts)
+            say(text="\n".join(msg_lines), thread_ts=reply_ts)
         except LegalQAAPIError as e:
-            say(text=f"⚠️ {e.message}", thread_ts=thread_ts)
+            say(text=f"⚠️ {e.message}", thread_ts=reply_ts)
 
     def _handle_select_document(
         self,
@@ -179,8 +179,9 @@ class SlackAdapter:
                 conversation_id=None  # Reset conversation to start fresh with this doc
             )
 
+            context_scope = "in this thread" if thread_ts else "in this conversation"
             say(
-                text=f"Selected document *{filename}* (`{doc_id}`). You can now ask questions about it in this thread!",
+                text=f"Selected document *{filename}* (`{doc_id}`). You can now ask questions about it {context_scope}!",
                 thread_ts=reply_ts
             )
         except LegalQAAPIError as e:
@@ -304,13 +305,14 @@ class SlackAdapter:
                     conversation_id=None
                 )
 
+                context_scope = "in this thread" if thread_ts else "in this conversation"
                 say(
                     text=(
                         f"✅ Successfully processed and indexed *{file_name}*!\n"
                         f"• Document ID: `{doc_id}`\n"
                         f"• Pages: {pages}\n"
                         f"• Chunks: {chunks}\n\n"
-                        f"This document is now set as your active context in this thread. Feel free to ask questions!"
+                        f"This document is now set as your active context {context_scope}. Feel free to ask questions!"
                     ),
                     thread_ts=reply_ts
                 )
