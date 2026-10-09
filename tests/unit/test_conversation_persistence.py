@@ -288,3 +288,29 @@ def test_conversation_delete_requires_associated_document_scope(temp_db):
     assert service.get_conversation(conv.conversation_id) is not None
     assert service.delete_conversation(conv.conversation_id, "doc_owner") is True
     assert service.get_conversation(conv.conversation_id) is None
+
+
+def test_delete_all_conversations(temp_db):
+    service: ConversationService = temp_db["service"]
+    c1 = service.create_conversation(document_id="doc_1")
+    c2 = service.create_conversation(document_id="doc_2")
+    service.add_message(c1.conversation_id, role="user", content="msg 1")
+    service.add_message(c2.conversation_id, role="user", content="msg 2")
+
+    assert len(service.list_conversations()) == 2
+    deleted = service.delete_all_conversations()
+    assert deleted == 2
+    assert len(service.list_conversations()) == 0
+
+
+def test_delete_all_conversations_api(temp_db):
+    service: ConversationService = temp_db["service"]
+    c1 = service.create_conversation(document_id="doc_1")
+    service.add_message(c1.conversation_id, role="user", content="msg 1")
+
+    with TestClient(app) as client:
+        res = client.delete("/api/conversations")
+        assert res.status_code == 200
+        assert res.json()["success"] is True
+        assert res.json()["data"]["deleted_count"] >= 1
+

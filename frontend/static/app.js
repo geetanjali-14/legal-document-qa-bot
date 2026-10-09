@@ -82,6 +82,15 @@ const deleteConvConfirmBtn = document.getElementById("deleteConvConfirmBtn");
 let pendingConvDeleteId = null;
 let pendingConvDeleteDocId = null;
 
+// Settings & Delete All Chats
+const openSettingsBtn = document.getElementById("openSettingsBtn");
+const settingsDialog = document.getElementById("settingsDialog");
+const settingsDialogCloseBtn = document.getElementById("settingsDialogCloseBtn");
+const deleteAllChatsOpenBtn = document.getElementById("deleteAllChatsOpenBtn");
+const deleteAllChatsDialog = document.getElementById("deleteAllChatsDialog");
+const deleteAllChatsCancelBtn = document.getElementById("deleteAllChatsCancelBtn");
+const deleteAllChatsConfirmBtn = document.getElementById("deleteAllChatsConfirmBtn");
+
 const docSwitchDialog = document.getElementById("docSwitchDialog");
 const switchFromDocName = document.getElementById("switchFromDocName");
 const switchToDocName = document.getElementById("switchToDocName");
@@ -274,6 +283,33 @@ function setupEventListeners() {
     });
   }
   if (deleteConvConfirmBtn) deleteConvConfirmBtn.addEventListener("click", confirmDeleteConversation);
+
+  // Settings & Delete All Chats
+  if (openSettingsBtn && settingsDialog) {
+    openSettingsBtn.addEventListener("click", () => {
+      closeSidebar();
+      settingsDialog.showModal();
+    });
+  }
+  if (settingsDialogCloseBtn && settingsDialog) {
+    settingsDialogCloseBtn.addEventListener("click", () => {
+      settingsDialog.close();
+    });
+  }
+  if (deleteAllChatsOpenBtn && deleteAllChatsDialog) {
+    deleteAllChatsOpenBtn.addEventListener("click", () => {
+      if (settingsDialog) settingsDialog.close();
+      deleteAllChatsDialog.showModal();
+    });
+  }
+  if (deleteAllChatsCancelBtn && deleteAllChatsDialog) {
+    deleteAllChatsCancelBtn.addEventListener("click", () => {
+      deleteAllChatsDialog.close();
+    });
+  }
+  if (deleteAllChatsConfirmBtn) {
+    deleteAllChatsConfirmBtn.addEventListener("click", confirmDeleteAllChats);
+  }
 
   if (switchCancelBtn && docSwitchDialog) {
     switchCancelBtn.addEventListener("click", () => {
@@ -986,6 +1022,31 @@ async function confirmDeleteConversation() {
     }
   } catch (err) {
     console.error("Failed to delete conversation:", err);
+  }
+}
+
+async function confirmDeleteAllChats() {
+  if (deleteAllChatsDialog) deleteAllChatsDialog.close();
+  try {
+    const res = await fetch("/api/conversations", { method: "DELETE" });
+    if (res.ok) {
+      // Clear localStorage chat references
+      localStorage.removeItem("legal_qa_active_conv");
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("legal_qa_conv_")) {
+          localStorage.removeItem(key);
+        }
+      }
+      initNewChatState(activeDocumentId);
+      await fetchConversations();
+      showStatus("All chats have been deleted.", "success");
+    } else {
+      showStatus("Failed to delete chats.", "error");
+    }
+  } catch (err) {
+    console.error("Failed to delete all conversations:", err);
+    showStatus("Error deleting chats.", "error");
   }
 }
 

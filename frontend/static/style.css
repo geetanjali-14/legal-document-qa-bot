@@ -297,6 +297,18 @@ button, input, textarea {
   padding-top: 12px;
 }
 
+.settings-nav-section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 10px;
+  padding-bottom: 4px;
+}
+
+.sidebar-settings-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .sidebar-doc-actions {
   display: flex;
   flex-direction: column;
@@ -333,6 +345,69 @@ button, input, textarea {
 .sidebar-action-btn.secondary:hover {
   background: var(--bg-subtle);
   color: var(--ink-900);
+}
+
+/* Settings Dialog Styling */
+.settings-dialog {
+  max-width: 540px;
+}
+
+.settings-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-group-header h3 {
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--ink-900);
+  margin-bottom: 4px;
+}
+
+.settings-group-desc {
+  font-size: 0.82rem;
+  color: var(--ink-500);
+}
+
+.settings-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.settings-item.danger-item {
+  border-color: rgba(220, 38, 38, 0.2);
+  background: #fffafa;
+}
+
+.settings-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-item-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink-900);
+}
+
+.settings-item-desc {
+  font-size: 0.8rem;
+  color: var(--ink-500);
 }
 
 .sidebar-footer {

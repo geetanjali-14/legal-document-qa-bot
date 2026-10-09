@@ -99,6 +99,9 @@ class ConversationService:
     def delete_conversation(self, conversation_id: str, document_id: str) -> bool:
         return self.repository.delete_conversation(conversation_id, document_id)
 
+    def delete_all_conversations(self, document_id: Optional[str] = None) -> int:
+        return self.repository.delete_all_conversations(document_id=document_id)
+
     def ensure_conversation_exists(
         self,
         conversation_id: Optional[str],

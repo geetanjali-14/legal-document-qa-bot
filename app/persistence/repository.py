@@ -207,6 +207,26 @@ class ConversationRepository:
             logger.info(f"Deleted conversation {conversation_id}")
             return True
 
+    def delete_all_conversations(self, document_id: Optional[str] = None) -> int:
+        """Deletes conversations and their messages. If document_id is provided, only deletes chats associated with it."""
+        with self.session_factory() as session:
+            query = session.query(ConversationModel)
+            convs = query.all()
+            to_delete = []
+            for conv in convs:
+                if document_id:
+                    if document_id in (conv.document_ids or []):
+                        to_delete.append(conv)
+                else:
+                    to_delete.append(conv)
+
+            count = len(to_delete)
+            for conv in to_delete:
+                session.delete(conv)
+            session.commit()
+            logger.info(f"Deleted {count} conversation(s) (document_id filter={document_id})")
+            return count
+
     def save_document_profile(
         self,
         document_id: str,

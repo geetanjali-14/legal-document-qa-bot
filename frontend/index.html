@@ -61,6 +61,18 @@
           </div>
         </section>
 
+        <section class="sidebar-section settings-nav-section" aria-label="Application settings">
+          <div class="sidebar-section-header">
+            <span class="sidebar-section-title">SETTINGS</span>
+          </div>
+          <div class="sidebar-settings-actions">
+            <button type="button" id="openSettingsBtn" class="sidebar-action-btn secondary">
+              <span class="btn-icon" aria-hidden="true">⚙</span>
+              <span>Settings</span>
+            </button>
+          </div>
+        </section>
+
         <footer class="sidebar-footer">
           <div class="footer-disclaimer">
             <span>Informational legal reference only. Not formal legal advice.</span>
@@ -265,6 +277,43 @@
       <div class="dialog-footer">
         <button type="button" class="secondary-btn" id="deleteConvCancelBtn">Cancel</button>
         <button type="button" class="danger-btn" id="deleteConvConfirmBtn">Delete</button>
+      </div>
+    </dialog>
+
+    <!-- Settings Modal -->
+    <dialog class="app-dialog settings-dialog" id="settingsDialog" aria-labelledby="settingsDialogTitle">
+      <div class="dialog-header">
+        <h2 id="settingsDialogTitle">Settings</h2>
+        <button type="button" class="icon-btn" id="settingsDialogCloseBtn" aria-label="Close settings">×</button>
+      </div>
+      <div class="dialog-body settings-dialog-body">
+        <div class="settings-group">
+          <div class="settings-group-header">
+            <h3>Chat Management</h3>
+            <p class="settings-group-desc">Manage saved conversations and chat history.</p>
+          </div>
+          <div class="settings-item danger-item">
+            <div class="settings-item-info">
+              <strong class="settings-item-title">Delete all chats</strong>
+              <span class="settings-item-desc">Permanently remove all chat history and conversation sessions.</span>
+            </div>
+            <button type="button" class="danger-btn" id="deleteAllChatsOpenBtn">Delete All Chats</button>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Delete All Chats Confirmation Modal -->
+    <dialog class="app-dialog confirm-dialog" id="deleteAllChatsDialog" aria-labelledby="deleteAllChatsTitle">
+      <div class="dialog-header">
+        <h2 id="deleteAllChatsTitle">Delete All Chats</h2>
+      </div>
+      <div class="dialog-body">
+        <p>Are you sure you want to permanently delete <strong>all conversations</strong>? This action cannot be undone.</p>
+      </div>
+      <div class="dialog-footer">
+        <button type="button" class="secondary-btn" id="deleteAllChatsCancelBtn">Cancel</button>
+        <button type="button" class="danger-btn" id="deleteAllChatsConfirmBtn">Yes, Delete All Chats</button>
       </div>
     </dialog>
   </div>

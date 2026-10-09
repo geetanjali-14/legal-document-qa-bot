@@ -134,3 +134,17 @@ async def delete_conversation(
         message="Conversation deleted successfully.",
         data={"conversation_id": conversation_id, "deleted": True}
     )
+
+
+@router.delete("", response_model=ApiResponse)
+async def delete_all_conversations(
+    document_id: Optional[str] = Query(default=None, description="Optional document ID filter"),
+    service: ConversationService = Depends(get_conversation_service)
+):
+    deleted_count = service.delete_all_conversations(document_id=document_id)
+    return ApiResponse(
+        success=True,
+        message=f"Deleted {deleted_count} conversation(s) successfully.",
+        data={"deleted_count": deleted_count}
+    )
+
