@@ -55,8 +55,38 @@ def test_format_slack_answer():
             "clause_number": "4.1"
         }
     ]
+    # Default: document ID is hidden from user-facing answers to avoid clutter
     formatted = format_slack_answer(answer, sources=sources, document_id="doc_123")
     assert "The notice period is 30 days." in formatted
     assert "*Page 3* — Clause 4 (Clause 4.1)" in formatted
-    assert "_Document Context: `doc_123`_" in formatted
+    assert "_Document Context:" not in formatted
+
+    # Explicit flag: document context is included (e.g. for troubleshooting or document selection)
+    formatted_debug = format_slack_answer(answer, sources=sources, document_id="doc_123", show_document_context=True)
+    assert "_Document Context: `doc_123`_" in formatted_debug
+
+
+def test_markdown_to_slack_formatting():
+    from app.integrations.slack_formatter import markdown_to_slack
+
+    raw = (
+        "This is **bold text** and another **important term**.\n"
+        "* **Parties:** Alpha Corp and Beta LLC\n"
+        "- **Key Sections:** Section 1, Section 2\n"
+        "Literal escaped backslash: \\*not bold\\*"
+    )
+    converted = markdown_to_slack(raw)
+
+    # Standard Markdown **bold** becomes Slack *bold*
+    assert "*bold text*" in converted
+    assert "*important term*" in converted
+    assert "**" not in converted
+
+    # List items with asterisks or dashes become bullets
+    assert "• *Parties:* Alpha Corp and Beta LLC" in converted
+    assert "• *Key Sections:* Section 1, Section 2" in converted
+
+    # Literal backslashes before asterisks are unescaped
+    assert "\\*" not in converted
+
 

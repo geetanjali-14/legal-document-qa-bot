@@ -76,9 +76,10 @@ class DocumentProfileTool:
         if not chunks:
             return None
 
-        # Extract preamble text (typically chunks from page 1)
+        # Extract preamble text (typically chunks from early pages)
         p1_chunks = [c for c in chunks if getattr(c, "page_number", None) == 1]
         preamble_text = "\n".join(c.text for c in p1_chunks) if p1_chunks else (chunks[0].text if hasattr(chunks[0], "text") else "")
+        early_text = "\n".join(c.text for c in chunks[:10] if hasattr(c, "text"))
 
         # Detect Document Type
         doc_type = "Legal Agreement"
@@ -89,6 +90,15 @@ class DocumentProfileTool:
             doc_type = "Master Services Agreement"
         elif "non-disclosure" in preamble_text.lower() or "confidentiality" in preamble_text.lower():
             doc_type = "Non-Disclosure Agreement"
+        else:
+            # Fallback: check filename or top of document for explicit policy / agreement titles
+            orig_fname = getattr(doc, "original_filename", "") or ""
+            if "policy" in orig_fname.lower() or "policy" in early_text[:200].lower():
+                policy_match = re.search(r"([A-Za-z0-9\s]{3,40}\bPolicy\b)", early_text[:300], re.IGNORECASE)
+                if policy_match:
+                    doc_type = policy_match.group(1).strip()
+                else:
+                    doc_type = "Policy Document"
 
         # Detect Parties
         parties: List[str] = []
@@ -103,38 +113,84 @@ class DocumentProfileTool:
             if between_match:
                 parties = [between_match.group(1).strip(" \t\n\r\"'"), between_match.group(2).strip(" \t\n\r\"'")]
 
-        # Detect Effective Date
+        # Detect Effective Date across all chunks
         effective_date = None
-        date_match = re.search(r'effective\s+(?:as\s+of\s+)?([A-Za-z]+\s+\d{1,2},\s*\d{4}|\d{1,2}\s+[A-Za-z]+\s+\d{4})', preamble_text, re.IGNORECASE)
-        if date_match:
-            effective_date = date_match.group(1).strip()
+        for c in chunks:
+            c_txt = getattr(c, "text", "") or ""
+            date_match = re.search(
+                r'effective\s+(?:from|as\s+of|on)?\s*([0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+[0-9]{4}|[A-Za-z]+\s+[0-9]{1,2},?\s+[0-9]{4})',
+                c_txt,
+                re.IGNORECASE
+            )
+            if date_match:
+                effective_date = date_match.group(1).strip()
+                break
 
-        # Clean distinct major sections, removing noisy OCR artifacts and generic headings
-        sections_set: Set[str] = set()
+        # Grounded Purpose / Objective Statement extraction directly from document text
+        purpose_stmt = None
+        for c in chunks:
+            c_txt = getattr(c, "text", "") or ""
+            m_purp = re.search(
+                r'(?:1\.\s*Purpose\s*[\n\r]+)?([^\n\r]+(?:purpose of this (?:policy|agreement|document|contract) is [^\.\n]+(?:\.[^\.\n]+)?\.?))',
+                c_txt,
+                re.IGNORECASE
+            )
+            if m_purp:
+                purpose_stmt = m_purp.group(1).strip()
+                # Ensure it ends with a period
+                if not purpose_stmt.endswith('.'):
+                    purpose_stmt += '.'
+                break
+
+        # Clean distinct major sections, removing noise, zero-width characters, month names, and generic headings
+        generic_noise = {
+            "general", "general provisions", "contents", "table of contents", "index",
+            "office", "month of", "joining", "january", "february", "march", "april",
+            "may", "june", "july", "august", "september", "october", "november", "december"
+        }
+        seen_sections = set()
+        clean_major_sections = []
         source_pages: Set[int] = set()
+
         for c in chunks:
             source_pages.add(c.page_number)
-            sec = (c.section or "").strip()
-            if sec and sec.lower() not in {"general", "general provisions", "contents", "table of contents", "index"}:
-                # Clean up trailing colons or noise
-                sec_clean = re.sub(r'[:;\.]+$', '', sec).strip()
-                if len(sec_clean) > 2 and not sec_clean.lower().startswith("contents"):
-                    sections_set.add(sec_clean)
+            raw_sec = (c.section or "").strip()
+            # Remove zero-width spaces and formatting artifacts
+            sec = re.sub(r'[\u200b\u200c\u200d\ufeff]', '', raw_sec).strip()
+            sec = re.sub(r'[:;\.]+$', '', sec).strip()
+            sec = ' '.join(sec.split())
+            if not sec:
+                continue
+            sec_lower = sec.lower()
+            if sec_lower in generic_noise or len(sec) < 3:
+                continue
+            # Filter out person name/director signatures from key sections list
+            if "director" in sec_lower or "technologies pvt" in sec_lower:
+                continue
+            if sec_lower not in seen_sections:
+                seen_sections.add(sec_lower)
+                clean_major_sections.append(sec)
 
-        major_sections = sorted(list(sections_set))
-        if not major_sections:
-            major_sections = ["General Provisions"]
+        if not clean_major_sections:
+            clean_major_sections = ["General Provisions"]
 
-        # Synthesize concise, natural overview grounded in verified document data
+        # Synthesize concise, natural overview strictly grounded in verified document data
         parties_str = " and ".join(parties) if parties else ""
         parties_clause = f" between {parties_str}" if parties_str else ""
         date_str = f", effective {effective_date}" if effective_date else ""
         page_str = f"{doc.page_count} page{'s' if doc.page_count != 1 else ''}"
-        
-        exec_summary = (
-            f"This document is an {doc_type}{parties_clause}{date_str} spanning {page_str}. "
-            f"It outlines key operational policies and provisions across the agreement."
-        )
+
+        if purpose_stmt:
+            exec_summary = (
+                f"This document is a {doc_type}{parties_clause}{date_str} spanning {page_str}. "
+                f"{purpose_stmt}"
+            )
+        else:
+            doc_article = "an" if doc_type[0].lower() in "aeiou" else "a"
+            exec_summary = (
+                f"This document is {doc_article} {doc_type}{parties_clause}{date_str} spanning {page_str}. "
+                f"It outlines key operational policies and provisions across the agreement."
+            )
 
         from datetime import datetime, timezone
         return DocumentProfileResult(
@@ -144,9 +200,9 @@ class DocumentProfileTool:
             parties=parties,
             effective_date=effective_date,
             executive_summary=exec_summary,
-            major_topics=major_sections,
+            major_topics=clean_major_sections,
             source_pages=sorted(list(source_pages)),
-            source_sections=major_sections,
+            source_sections=clean_major_sections,
             generated_at=datetime.now(timezone.utc).isoformat()
         )
 
@@ -172,7 +228,7 @@ class DocumentProfileTool:
             if profile.effective_date:
                 bullets.append(f"* **Effective Date:** {profile.effective_date}")
             if profile.major_topics and profile.major_topics != ["General Provisions"]:
-                # Filter out topics that duplicate document title
+                # Filter out topics that duplicate document title or type
                 filtered_topics = [
                     t for t in profile.major_topics
                     if t.lower() != profile.document_type.lower() and t.lower() not in profile.document_type.lower()

@@ -98,7 +98,8 @@ class SlackMappingRepository:
         team_id: Optional[str] = None,
         thread_ts: Optional[str] = None,
         document_id: Optional[str] = None,
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        reset_conversation: bool = False
     ) -> SlackConversationMappingModel:
         """Save or update mapping for given context."""
         key = self.build_context_key(team_id, channel_id, thread_ts, user_id)
@@ -119,10 +120,15 @@ class SlackMappingRepository:
                 )
                 session.add(mapping)
             else:
-                if document_id is not None:
-                    mapping.document_id = document_id
-                if conversation_id is not None:
-                    mapping.conversation_id = conversation_id
+                # If document_id is changing to a new document or reset_conversation is requested, clear stale conversation_id
+                if (document_id is not None and document_id != mapping.document_id) or reset_conversation:
+                    mapping.document_id = document_id if document_id is not None else mapping.document_id
+                    mapping.conversation_id = conversation_id  # Reset to None or the new conversation_id
+                else:
+                    if document_id is not None:
+                        mapping.document_id = document_id
+                    if conversation_id is not None:
+                        mapping.conversation_id = conversation_id
                 mapping.updated_at = utc_now()
 
             session.commit()

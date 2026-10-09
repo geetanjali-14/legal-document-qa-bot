@@ -115,3 +115,44 @@ def test_team_id_fallback_resilience(in_memory_repo):
     assert mapping.document_id == "doc_annual_increment"
 
 
+def test_document_change_resets_stale_conversation(in_memory_repo):
+    """
+    Verifies that when a user had an existing general conversation and later uploads
+    or selects a document, the stale conversation_id is reset so mismatched
+    conversation/document requests are prevented.
+    """
+    channel = "D_DM_CHANNEL"
+    user = "U_USER_1"
+    team = "T0C7THV2CJF"
+
+    # User had a general query conversation with no document
+    in_memory_repo.save_mapping(
+        channel_id=channel,
+        user_id=user,
+        team_id=team,
+        thread_ts=None,
+        document_id=None,
+        conversation_id="conv_general_query_123"
+    )
+
+    mapping = in_memory_repo.get_mapping(channel, user, team_id=team)
+    assert mapping.conversation_id == "conv_general_query_123"
+    assert mapping.document_id is None
+
+    # User now uploads a new document: document_id changes from None -> doc_new
+    in_memory_repo.save_mapping(
+        channel_id=channel,
+        user_id=user,
+        team_id=team,
+        thread_ts=None,
+        document_id="doc_new_policy",
+        conversation_id=None,
+        reset_conversation=True
+    )
+
+    updated = in_memory_repo.get_mapping(channel, user, team_id=team)
+    assert updated.document_id == "doc_new_policy"
+    assert updated.conversation_id is None  # stale conversation was reset
+
+
+

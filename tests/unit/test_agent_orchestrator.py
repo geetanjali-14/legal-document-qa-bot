@@ -205,6 +205,91 @@ def test_document_profile_synthesis_and_grounding(test_env):
     assert "Beta LLC" in ans
 
 
+def test_policy_document_profile_grounded_summary_and_clean_sections(test_env):
+    """
+    Verifies:
+    1. Grounded purpose statement is extracted directly from document text.
+    2. Sections are deduplicated and clean of noise/OCR artifacts/month names.
+    3. Document type reflects policy.
+    4. Formatted answer presents key sections without duplicates.
+    """
+    prof_tool = test_env["profile_tool"]
+    mock_doc_service = test_env["doc_service"]
+
+    policy_meta = DocumentMetadata(
+        document_id="doc_policy_99",
+        filename="Annual_Increment_Policy.pdf",
+        original_filename="Annual Increment Policy.pdf",
+        file_size_bytes=15000,
+        page_count=5,
+        chunk_count=5,
+        content_hash="policy_hash_99",
+        status="processed"
+    )
+    policy_chunks = [
+        DocumentChunk(
+            chunk_id="chk_p1",
+            document_id="doc_policy_99",
+            document_name="Annual_Increment_Policy.pdf",
+            page_number=1,
+            section="Annual Increment Policy​",
+            text="Annual Increment Policy\n1. Purpose\n2. Increment Cycle\n3. Eligibility"
+        ),
+        DocumentChunk(
+            chunk_id="chk_p2",
+            document_id="doc_policy_99",
+            document_name="Annual_Increment_Policy.pdf",
+            page_number=2,
+            section="Purpose",
+            text="1. Purpose\n\nThe purpose of this policy is to establish a fair, transparent, and consistent framework for annual salary reviews at Acme Corp."
+        ),
+        DocumentChunk(
+            chunk_id="chk_p3",
+            document_id="doc_policy_99",
+            document_name="Annual_Increment_Policy.pdf",
+            page_number=2,
+            section="Annual Increment Policy",  # Duplicate title
+            text="2. Increment Cycle\n\nAcme Corp follows a single annual salary increment cycle."
+        ),
+        DocumentChunk(
+            chunk_id="chk_p4",
+            document_id="doc_policy_99",
+            document_name="Annual_Increment_Policy.pdf",
+            page_number=3,
+            section="August",  # Month noise
+            text="August: 12 Months Full Annual Increment"
+        ),
+        DocumentChunk(
+            chunk_id="chk_p5",
+            document_id="doc_policy_99",
+            document_name="Annual_Increment_Policy.pdf",
+            page_number=5,
+            section="Effective Date",
+            text="Approved salary revisions shall be effective from 1st August 2026."
+        )
+    ]
+
+    orig_meta = test_env["meta"]
+    mock_doc_service.get_document.side_effect = lambda did: policy_meta if did == "doc_policy_99" else orig_meta
+    mock_doc_service.vector_store.chunks_by_doc["doc_policy_99"] = policy_chunks
+
+    profile = prof_tool.get_document_profile("doc_policy_99")
+    assert profile is not None
+    assert "Policy" in profile.document_type
+    assert profile.effective_date == "1st August 2026"
+    # Grounded purpose statement must be in summary
+    assert "The purpose of this policy is to establish a fair, transparent, and consistent framework" in profile.executive_summary
+    # Major topics should not contain "August" or duplicate "Annual Increment Policy"
+    assert "August" not in profile.major_topics
+    assert profile.major_topics.count("Annual Increment Policy") <= 1
+
+    formatted = prof_tool.format_overview_answer(profile)
+    assert "The purpose of this policy is to establish" in formatted
+    assert "Effective Date:" in formatted
+    # Should not duplicate the title in Key Sections
+    assert formatted.count("Annual Increment Policy") <= 1
+
+
 def test_document_profile_cached_in_sqlite(test_env):
     prof_tool = test_env["profile_tool"]
     repo = test_env["repo"]

@@ -305,7 +305,8 @@ def test_dm_upload_and_separate_toplevel_message_followup(mock_httpx_cls, slack_
     answer_text = say_q1.call_args[1]["text"]
     assert "This document outlines the guidelines" in answer_text
     assert "*Page 1* — 1. Purpose" in answer_text
-    assert "_Document Context: `doc_03f8339dc570`_" in answer_text
+    # Document context is now kept clean and hidden from ordinary chat answers
+    assert "_Document Context:" not in answer_text
 
 
 def test_thread_replies_and_multiuser_isolation(slack_adapter, mock_api_client):
@@ -419,5 +420,157 @@ def test_thread_replies_and_multiuser_isolation(slack_adapter, mock_api_client):
         document_id=None,
         conversation_id=None
     )
+
+
+@patch("httpx.Client")
+def test_upload_pdf_after_general_chat_clears_stale_conversation(mock_httpx_cls, slack_adapter, mock_api_client):
+    """
+    Verifies that when a user previously engaged in general legal chat (generating a conversation_id
+    with no attached document), and later uploads a PDF, the stale conversation_id is purged
+    so subsequent questions on the document do not fail with mismatched conversation errors.
+    """
+    mock_http = MagicMock()
+    mock_httpx_cls.return_value.__enter__.return_value = mock_http
+    mock_http.get.return_value.status_code = 200
+    mock_http.get.return_value.content = b"%PDF-1.4 mock content"
+
+    channel = "D0C7JEU5NKZ"
+    user = "U0C83FCHPL4"
+    team = "T0C7THV2CJF"
+
+    # Step 1: User asks general question, gets conv_acb4215d19644490 (no document)
+    mock_api_client.chat.return_value = {
+        "answer": "General overview of contract law.",
+        "conversation_id": "conv_acb4215d19644490",
+        "document_id": None,
+        "sources": []
+    }
+    say_gen = MagicMock()
+    slack_adapter.handle_message_event({
+        "channel": channel,
+        "channel_type": "im",
+        "user": user,
+        "team": team,
+        "ts": "1791533000.01",
+        "client_msg_id": "msg_gen_01",
+        "text": "What is an NDA?"
+    }, say_gen, client=MagicMock(), team_id=team)
+
+    mapping = slack_adapter.mapping_repo.get_mapping(channel, user, team_id=team)
+    assert mapping.conversation_id == "conv_acb4215d19644490"
+    assert mapping.document_id is None
+
+    # Step 2: User uploads Annual Increment Policy.pdf
+    mock_api_client.upload_document.return_value = {
+        "document_id": "doc_03f8339dc570",
+        "filename": "Annual Increment Policy.pdf",
+        "status": "processed",
+        "page_count": 5,
+        "chunk_count": 37
+    }
+    say_upload = MagicMock()
+    slack_adapter.handle_message_event({
+        "channel": channel,
+        "channel_type": "im",
+        "user": user,
+        "team": team,
+        "ts": "1791533100.02",
+        "client_msg_id": "msg_upload_02",
+        "files": [{
+            "id": "F_001",
+            "name": "Annual Increment Policy.pdf",
+            "filetype": "pdf",
+            "url_private_download": "https://slack.com/files/policy.pdf"
+        }]
+    }, say_upload, client=MagicMock(), team_id=team)
+
+    # Repository should now reflect doc_03f8339dc570 and NO stale conversation_id!
+    mapping_after_upload = slack_adapter.mapping_repo.get_mapping(channel, user, team_id=team)
+    assert mapping_after_upload.document_id == "doc_03f8339dc570"
+    assert mapping_after_upload.conversation_id is None
+
+    # Step 3: User asks "What is this document about?"
+    mock_api_client.chat.reset_mock()
+    mock_api_client.chat.return_value = {
+        "answer": "The document covers annual salary increments.",
+        "conversation_id": "conv_fresh_doc_session_999",
+        "document_id": "doc_03f8339dc570",
+        "sources": []
+    }
+    say_q = MagicMock()
+    slack_adapter.handle_message_event({
+        "channel": channel,
+        "channel_type": "im",
+        "user": user,
+        "team": team,
+        "ts": "1791533200.03",
+        "client_msg_id": "msg_doc_q_03",
+        "text": "What is this document about?"
+    }, say_q, client=MagicMock(), team_id=team)
+
+    mock_api_client.chat.assert_called_once_with(
+        question="What is this document about?",
+        document_id="doc_03f8339dc570",
+        conversation_id=None
+    )
+
+
+def test_conversation_mismatch_self_healing_retry(slack_adapter, mock_api_client):
+    """
+    Verifies that if for any reason a stale conversation ID produces a 400 mismatch error from the API,
+    the SlackAdapter automatically catches the error, clears the invalid conversation ID,
+    and successfully retries the chat request with conversation_id=None.
+    """
+    from app.integrations.legal_qa_client import LegalQAAPIError
+
+    channel = "D0C7JEU5NKZ"
+    user = "U0C83FCHPL4"
+    team = "T0C7THV2CJF"
+
+    # Prepopulate mapping with mismatched state
+    slack_adapter.mapping_repo.save_mapping(
+        channel_id=channel,
+        user_id=user,
+        team_id=team,
+        document_id="doc_03f8339dc570",
+        conversation_id="conv_mismatched_old"
+    )
+
+    # First call fails with 400 mismatch, second call succeeds
+    mock_api_client.chat.side_effect = [
+        LegalQAAPIError(
+            status_code=400,
+            message="Conversation 'conv_mismatched_old' does not belong to document 'doc_03f8339dc570'. Mismatched document/conversation requests are rejected to maintain document isolation."
+        ),
+        {
+            "answer": "This policy specifies employee increment cycles.",
+            "conversation_id": "conv_healed_new_123",
+            "document_id": "doc_03f8339dc570",
+            "sources": []
+        }
+    ]
+
+    say_mock = MagicMock()
+    slack_adapter.handle_message_event({
+        "channel": channel,
+        "channel_type": "im",
+        "user": user,
+        "team": team,
+        "ts": "1791533500.01",
+        "client_msg_id": "msg_heal_01",
+        "text": "What is this document about?"
+    }, say_mock, client=MagicMock(), team_id=team)
+
+    assert mock_api_client.chat.call_count == 2
+    # Verify second call had conversation_id=None
+    second_call_args = mock_api_client.chat.call_args_list[1]
+    assert second_call_args[1]["conversation_id"] is None
+    assert second_call_args[1]["document_id"] == "doc_03f8339dc570"
+
+    # Verify user received the actual answer without seeing an error
+    final_text = say_mock.call_args[1]["text"]
+    assert "This policy specifies employee increment cycles." in final_text
+    assert "Mismatched" not in final_text
+
 
 

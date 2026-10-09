@@ -178,7 +178,8 @@ class SlackAdapter:
                 team_id=team,
                 thread_ts=thread_ts,
                 document_id=doc_id,
-                conversation_id=None  # Reset conversation to start fresh with this doc
+                conversation_id=None,  # Reset conversation to start fresh with this doc
+                reset_conversation=True
             )
 
             context_scope = "in this thread" if thread_ts else "in this conversation"
@@ -216,11 +217,37 @@ class SlackAdapter:
         )
 
         try:
-            chat_res = self.api_client.chat(
-                question=question,
-                document_id=doc_id,
-                conversation_id=conv_id
-            )
+            try:
+                chat_res = self.api_client.chat(
+                    question=question,
+                    document_id=doc_id,
+                    conversation_id=conv_id
+                )
+            except LegalQAAPIError as e:
+                # If error is due to mismatched conversation (e.g. stale conv from general query or another doc),
+                # heal by resetting conversation_id and retrying once.
+                if conv_id and ("does not belong to document" in (e.message or "").lower() or e.status_code == 400):
+                    logger.warning(
+                        f"[SlackAdapter:Chat] Conversation mismatch detected ({conv_id} vs {doc_id}). "
+                        f"Resetting stale conversation and retrying."
+                    )
+                    conv_id = None
+                    self.mapping_repo.save_mapping(
+                        channel_id=channel,
+                        user_id=user,
+                        team_id=team,
+                        thread_ts=thread_ts,
+                        document_id=doc_id,
+                        conversation_id=None,
+                        reset_conversation=True
+                    )
+                    chat_res = self.api_client.chat(
+                        question=question,
+                        document_id=doc_id,
+                        conversation_id=None
+                    )
+                else:
+                    raise
 
             # Update conversation ID mapping
             new_conv_id = chat_res.get("conversation_id")
@@ -313,7 +340,8 @@ class SlackAdapter:
                     team_id=team,
                     thread_ts=thread_ts,
                     document_id=doc_id,
-                    conversation_id=None
+                    conversation_id=None,
+                    reset_conversation=True
                 )
 
                 context_scope = "in this thread" if thread_ts else "in this conversation"
