@@ -65,7 +65,7 @@ class DocumentService:
         self._load_metadata()
 
     def _load_metadata(self) -> None:
-        # 1. Load from DB repository if available (Postgres / SQLite)
+        # 1. Primary Source of Truth: Database repository (Neon PostgreSQL / SQLite)
         if self.repository is not None:
             try:
                 records = self.repository.list_document_records()
@@ -97,58 +97,47 @@ class DocumentService:
                     if meta.content_hash:
                         self._hash_to_id[meta.content_hash] = meta.document_id
                 if records:
-                    logger.info(f"Loaded {len(records)} document records from database.")
+                    logger.info(f"Loaded {len(records)} document records from primary database repository.")
+                    return
             except Exception as dberr:
                 logger.warning(f"Failed to load document records from database: {dberr}")
 
-        # 2. Also load from documents_meta.json file if present, and backfill into DB if needed
+        # 2. Offline / local fallback only when repository is absent or empty:
         if self.metadata_file.exists():
             try:
                 with open(self.metadata_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    updated = False
                     for item in data:
                         meta = DocumentMetadata(**item)
-                        # Backfill content_hash if missing from historical metadata
-                        if not meta.content_hash:
-                            content_bytes = self.storage_service.get_file_bytes(meta.filename)
-                            if content_bytes:
-                                meta.content_hash = hashlib.sha256(content_bytes).hexdigest()
-                                updated = True
-                                logger.info(f"Backfilled content_hash for document {meta.document_id}")
-
                         if meta.document_id not in self.documents:
                             self.documents[meta.document_id] = meta
                             if meta.content_hash:
                                 self._hash_to_id[meta.content_hash] = meta.document_id
-                            # Sync to DB if repo active
                             if self.repository is not None:
                                 try:
                                     self.repository.save_document_record(meta.model_dump(mode="json"))
                                 except Exception as sync_err:
-                                    logger.warning(f"Could not sync file record to DB for {meta.document_id}: {sync_err}")
+                                    logger.warning(f"Could not backfill file record to DB for {meta.document_id}: {sync_err}")
 
-                    if updated:
-                        self._save_metadata()
-
-                logger.info(f"Loaded {len(self.documents)} total document records into memory cache.")
+                logger.info(f"Loaded {len(self.documents)} document records from local fallback metadata file.")
             except Exception as e:
-                logger.error(f"Failed to load document metadata: {e}")
+                logger.error(f"Failed to load local fallback document metadata: {e}")
 
     def _save_metadata(self) -> None:
-        try:
-            with open(self.metadata_file, "w", encoding="utf-8") as f:
-                json.dump([d.model_dump(mode="json") for d in self.documents.values()], f, indent=2)
-        except Exception as e:
-            logger.error(f"Failed to save document metadata: {e}")
-
-        # Persist to database repository if available
+        # 1. Primary Source of Truth: Database repository
         if self.repository is not None:
             for doc in self.documents.values():
                 try:
                     self.repository.save_document_record(doc.model_dump(mode="json"))
                 except Exception as dberr:
                     logger.warning(f"Failed to save document record {doc.document_id} to DB: {dberr}")
+
+        # 2. Best-effort local file write for offline development (non-fatal if fails or absent)
+        try:
+            with open(self.metadata_file, "w", encoding="utf-8") as f:
+                json.dump([d.model_dump(mode="json") for d in self.documents.values()], f, indent=2)
+        except Exception as e:
+            logger.debug(f"Non-critical: could not save local metadata file: {e}")
 
     def sanitize_filename(self, filename: str) -> str:
         """Prevent path traversal and clean malicious filename characters."""
@@ -383,25 +372,6 @@ class DocumentService:
             actual_model = self.embedding_service.model_name
             actual_dimension = int(embeddings.shape[1]) if embeddings.ndim > 1 else 0
 
-            if self.rag_provider is not None and hasattr(self.rag_provider, "ingest_document"):
-                self.rag_provider.ingest_document(
-                    document_id=doc_id,
-                    document_name=original_filename,
-                    chunks=chunks,
-                    embeddings=embeddings
-                )
-            else:
-                self.vector_store.add_document(
-                    doc_id,
-                    chunks,
-                    embeddings,
-                    embedding_provider=actual_provider,
-                    embedding_model=actual_model
-                )
-            index_latency_ms = max(0.0, (time.perf_counter() - t_index_start) * 1000.0)
-
-            total_latency_ms = max(0.0, (time.perf_counter() - t_process_start) * 1000.0)
-
             ext = Path(original_filename).suffix.lower()
             mime = "application/pdf" if doc_type == "pdf" else f"image/{ext.lstrip('.')}"
             upload_ts = datetime.now(timezone.utc).isoformat()
@@ -430,6 +400,26 @@ class DocumentService:
             self.documents[doc_id] = meta
             self._hash_to_id[content_hash] = doc_id
             self._save_metadata()
+
+            # 4. Store in vector database / RAG provider (after document record exists in DB)
+            t_index_start = time.perf_counter()
+            if self.rag_provider is not None and hasattr(self.rag_provider, "ingest_document"):
+                self.rag_provider.ingest_document(
+                    document_id=doc_id,
+                    document_name=original_filename,
+                    chunks=chunks,
+                    embeddings=embeddings
+                )
+            else:
+                self.vector_store.add_document(
+                    doc_id,
+                    chunks,
+                    embeddings,
+                    embedding_provider=actual_provider,
+                    embedding_model=actual_model
+                )
+            index_latency_ms = max(0.0, (time.perf_counter() - t_index_start) * 1000.0)
+            total_latency_ms = max(0.0, (time.perf_counter() - t_process_start) * 1000.0)
 
             # Record document processing telemetry (safe metrics, no raw content)
             emb_tokens = getattr(self.embedding_service, "last_tokens", None)

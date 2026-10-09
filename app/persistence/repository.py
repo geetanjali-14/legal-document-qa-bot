@@ -405,3 +405,63 @@ class ConversationRepository:
             session.delete(doc)
             session.commit()
             return True
+
+    def save_document_chunks(
+        self,
+        document_id: str,
+        chunks: list,
+        embeddings: list
+    ) -> int:
+        """Persist document chunks and embeddings into document_chunks table."""
+        from app.persistence.models import DocumentChunkModel
+        with self.session_factory() as session:
+            # Delete existing chunks for document_id first
+            session.query(DocumentChunkModel).filter(
+                DocumentChunkModel.document_id == document_id
+            ).delete()
+
+            chunk_records = []
+            for idx, (chunk, vec) in enumerate(zip(chunks, embeddings)):
+                emb_list = vec.tolist() if hasattr(vec, "tolist") else list(vec)
+                c_model = DocumentChunkModel(
+                    document_id=document_id,
+                    chunk_id=chunk.chunk_id if hasattr(chunk, "chunk_id") else chunk.get("chunk_id", f"chk_{idx}"),
+                    chunk_index=idx,
+                    page_number=getattr(chunk, "page_number", None) or (chunk.get("page_number", 1) if isinstance(chunk, dict) else 1),
+                    section=getattr(chunk, "section", None) or (chunk.get("section") if isinstance(chunk, dict) else None),
+                    section_number=getattr(chunk, "section_number", None) or (chunk.get("section_number") if isinstance(chunk, dict) else None),
+                    section_title=getattr(chunk, "section_title", None) or (chunk.get("section_title") if isinstance(chunk, dict) else None),
+                    clause_number=getattr(chunk, "clause_number", None) or (chunk.get("clause_number") if isinstance(chunk, dict) else None),
+                    paragraph_number=getattr(chunk, "paragraph_number", None) or (chunk.get("paragraph_number") if isinstance(chunk, dict) else None),
+                    parent_chunk_id=getattr(chunk, "parent_chunk_id", None) or (chunk.get("parent_chunk_id") if isinstance(chunk, dict) else None),
+                    text=chunk.text if hasattr(chunk, "text") else chunk.get("text", ""),
+                    token_count=getattr(chunk, "token_count", None) or (chunk.get("token_count") if isinstance(chunk, dict) else None),
+                    content_hash=getattr(chunk, "content_hash", None) or (chunk.get("content_hash") if isinstance(chunk, dict) else None),
+                    breadcrumbs=getattr(chunk, "breadcrumbs", None) or (chunk.get("breadcrumbs", []) if isinstance(chunk, dict) else []),
+                    embedding=emb_list
+                )
+                chunk_records.append(c_model)
+
+            session.add_all(chunk_records)
+            session.commit()
+            return len(chunk_records)
+
+    def get_document_chunks(self, document_id: str) -> list:
+        """Fetch all chunks with embeddings for document_id ordered by chunk_index."""
+        from app.persistence.models import DocumentChunkModel
+        with self.session_factory() as session:
+            rows = session.query(DocumentChunkModel).filter(
+                DocumentChunkModel.document_id == document_id
+            ).order_by(DocumentChunkModel.chunk_index).all()
+            session.expunge_all()
+            return rows
+
+    def delete_document_chunks(self, document_id: str) -> int:
+        """Delete all chunks for document_id."""
+        from app.persistence.models import DocumentChunkModel
+        with self.session_factory() as session:
+            count = session.query(DocumentChunkModel).filter(
+                DocumentChunkModel.document_id == document_id
+            ).delete()
+            session.commit()
+            return count

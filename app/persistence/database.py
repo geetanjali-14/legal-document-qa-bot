@@ -50,6 +50,14 @@ class DatabaseManager:
                 autoflush=False,
                 bind=self.engine
             )
+            # Ensure vector extension exists on PostgreSQL before table creation
+            if not is_sqlite:
+                try:
+                    with self.engine.begin() as conn:
+                        conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector;")
+                except Exception as ext_err:
+                    logger.warning(f"Could not ensure vector extension: {ext_err}")
+
             # Safe table creation (does NOT drop existing data)
             from app.persistence import models  # noqa: F401
             Base.metadata.create_all(bind=self.engine)
@@ -75,7 +83,11 @@ class DatabaseManager:
             except Exception as mig_err:
                 logger.warning(f"Session column migration check skipped/warning: {mig_err}")
 
-            logger.info(f"Database initialized safely at {self.db_path}")
+            if is_sqlite:
+                logger.info(f"Database initialized safely at {self.db_path}")
+            else:
+                # Mask credentials if we want to log the host, or just log a safe string
+                logger.info("Database initialized safely using DATABASE_URL (PostgreSQL)")
         except Exception as e:
             logger.error(f"Failed to initialize database at {self.db_path}: {str(e)}")
             raise RuntimeError(f"Database initialization failed: {str(e)}") from e

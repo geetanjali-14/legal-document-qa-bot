@@ -206,7 +206,7 @@ Always practice token-optimized programming and communication:
   * Structure-aware chunking preserving legal hierarchies (Articles, Sections, Clauses) over arbitrary character slicing.
   * Zero-token deterministic tools prioritized for metadata, navigation, and document overview before invoking LLM synthesis.
   * Pluggable provider architecture for LLMs (Groq, Gemini, OpenAI, Mock) and vector stores (local numpy, Qdrant).
-* **Storage Invariants**: SQLite in WAL mode (`data/legal_qa.db`) for conversations and document records; pluggable PostgreSQL support. Never expose secrets or hardcode API keys.
+* **Storage Invariants**: Neon PostgreSQL with `pgvector` as the single source of truth for document metadata (`documents` table) and chunk vector embeddings (`document_chunks` table). SQLite with WAL mode (`data/legal_qa.db`) is retained as offline local fallback. Private Supabase Storage retains original document PDFs; local uploads and vector directories are disposable caches. Never expose secrets or hardcode API keys.
 * **Demo / Production Safeguard Rule**: In `DEMO_MODE=true`, uploads and conversations must remain strictly isolated per session token with active rate limiting.
 * **Memory Protocol**:
   * `memory.md`: Permanent operating rules, long-term architectural foundations, and permanent constraints.

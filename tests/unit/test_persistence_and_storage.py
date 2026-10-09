@@ -292,3 +292,55 @@ def test_duplicate_upload_detection_and_vector_loss_recovery(temp_dirs):
     assert len(doc_service.list_documents()) == 1
 
 
+def test_durable_vector_chunk_persistence_and_restart_recovery(temp_dirs):
+    """
+    Verify that chunks and vectors are persisted to the database repository,
+    and a fresh VectorStore with a completely clean/empty local directory
+    successfully restores all chunks and vectors directly from the database without re-embedding.
+    """
+    db_mgr = DatabaseManager(db_path=temp_dirs["db"])
+    repo = ConversationRepository(session_factory=db_mgr.session_factory)
+    storage = LocalStorageService(base_dir=temp_dirs["uploads"])
+
+    vector_store = VectorStore(storage_dir=temp_dirs["vectors"], repository=repo)
+    emb_service = EmbeddingService()
+    emb_service.provider = MockEmbeddingProvider(dimension=128)
+
+    doc_service = DocumentService(
+        pdf_service=PDFService(),
+        chunking_service=ChunkingService(chunk_size=200, chunk_overlap=50),
+        embedding_service=emb_service,
+        vector_store=vector_store,
+        upload_dir=temp_dirs["uploads"],
+        storage_service=storage,
+        repository=repo
+    )
+
+    sample_pdf_bytes = Path("documents/synthetic_contract.pdf").read_bytes()
+    doc = doc_service.process_document(sample_pdf_bytes, "synthetic_contract.pdf")
+    doc_id = doc.document_id
+
+    # 1. Verify chunks are persisted in database
+    db_chunks = repo.get_document_chunks(doc_id)
+    assert len(db_chunks) > 0
+    assert len(db_chunks) == len(vector_store.chunks_by_doc[doc_id])
+
+    # 2. Simulate fresh container deployment: wipe local vector_store directory completely
+    fresh_vector_dir = temp_dirs["tmp"] / "fresh_vector_store"
+    fresh_vector_dir.mkdir(parents=True, exist_ok=True)
+
+    # Instantiate brand new VectorStore pointing to fresh directory, connected to the same DB repo
+    recovered_vector_store = VectorStore(storage_dir=fresh_vector_dir, repository=repo)
+
+    # 3. Verify chunks and vectors restored immediately from DB without local files
+    assert recovered_vector_store.has_document(doc_id) is True
+    assert len(recovered_vector_store.chunks_by_doc[doc_id]) == len(db_chunks)
+
+    # 4. Verify search and retrieval works on recovered vector store
+    from app.services.retrieval_service import RetrievalService
+    retrieval = RetrievalService(emb_service, recovered_vector_store)
+    hits = retrieval.retrieve(doc_id, "agreement terms liability", top_k=2, threshold=0.0)
+    assert len(hits) > 0
+    assert hits[0][0].document_id == doc_id
+
+

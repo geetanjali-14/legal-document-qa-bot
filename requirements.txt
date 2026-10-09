@@ -22,6 +22,7 @@ google-genai>=1.0.0
 # Database & Persistence
 sqlalchemy>=2.0.0,<3.0.0
 psycopg2-binary>=2.9.9
+pgvector>=0.2.0
 
 # Cloud Storage
 boto3>=1.34.0,<2.0.0

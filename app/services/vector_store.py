@@ -13,15 +13,16 @@ from app.core.errors import EmbeddingDimensionMismatchError
 
 class VectorStore:
     """
-    Production-grade local vector store backed by local embedded Qdrant with
-    memory cache and disk persistence. Provides document isolation, deterministic
-    chunk IDs, safe re-indexing, and metadata filtering.
+    Production-grade vector store backed by Neon pgvector / relational DB persistence,
+    with local embedded Qdrant and memory cache for low-latency retrieval.
+    Provides document isolation, deterministic chunk IDs, and safe recovery.
     """
-    def __init__(self, storage_dir: Optional[Path] = None):
+    def __init__(self, storage_dir: Optional[Path] = None, repository: Optional[object] = None):
         self.storage_dir = storage_dir or settings.VECTOR_STORE_DIR
         self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self.repository = repository
 
-        # Local embedded Qdrant DB directory
+        # Local embedded Qdrant DB directory (disposable fast cache)
         self.qdrant_dir = self.storage_dir / "qdrant_db"
         self.qdrant_dir.mkdir(parents=True, exist_ok=True)
 
@@ -36,6 +37,11 @@ class VectorStore:
         self.chunks_by_doc: Dict[str, List[DocumentChunk]] = {}
         self.vectors_by_doc: Dict[str, np.ndarray] = {}
         self._load_all_persisted()
+
+    def set_repository(self, repository: object) -> None:
+        """Dynamically attach database repository and reload any persisted DB chunks."""
+        self.repository = repository
+        self._load_from_repository()
 
     def _get_collection_name(self, document_id: str) -> str:
         # Qdrant collection name sanitized
@@ -52,9 +58,15 @@ class VectorStore:
         return self.storage_dir / f"{document_id}_meta.json"
 
     def _load_all_persisted(self) -> None:
-        """Scan vector store directory and restore saved documents on startup."""
+        """Scan vector store directory and database to restore saved documents on startup."""
+        # 1. Load from DB repository if configured
+        self._load_from_repository()
+
+        # 2. Check local disk files for any additional/fallback cached items
         for chunks_path in self.storage_dir.glob("*_chunks.json"):
             doc_id = chunks_path.stem.replace("_chunks", "")
+            if doc_id in self.chunks_by_doc:
+                continue
             vector_path = self._get_doc_vector_path(doc_id)
             meta_path = self._get_doc_meta_path(doc_id)
             if vector_path.exists():
@@ -82,9 +94,57 @@ class VectorStore:
                     self.chunks_by_doc[doc_id] = chunks
                     self.vectors_by_doc[doc_id] = vectors
                     self._sync_to_qdrant(doc_id, chunks, vectors)
-                    logger.info(f"Loaded persisted vector store for doc {doc_id} ({len(chunks)} chunks)")
+                    logger.info(f"Loaded persisted vector store from disk for doc {doc_id} ({len(chunks)} chunks)")
                 except Exception as e:
                     logger.error(f"Error loading persisted vectors for {doc_id}: {str(e)}")
+
+    def _load_from_repository(self) -> None:
+        """Load stored chunks and vectors from Neon DB repository into memory and Qdrant cache."""
+        if not self.repository:
+            return
+        try:
+            doc_records = self.repository.list_document_records()
+            for doc_rec in doc_records:
+                doc_id = doc_rec.document_id
+                if doc_id in self.chunks_by_doc:
+                    continue
+                db_chunks = self.repository.get_document_chunks(doc_id)
+                if not db_chunks:
+                    continue
+
+                chunk_objs = []
+                vec_list = []
+                for c in db_chunks:
+                    chunk_objs.append(
+                        DocumentChunk(
+                            chunk_id=c.chunk_id,
+                            document_id=c.document_id,
+                            document_name=doc_rec.original_filename or "",
+                            page_number=c.page_number,
+                            section=c.section,
+                            section_number=c.section_number,
+                            section_title=c.section_title,
+                            clause_number=c.clause_number,
+                            paragraph_number=c.paragraph_number,
+                            parent_chunk_id=c.parent_chunk_id,
+                            text=c.text,
+                            token_count=c.token_count,
+                            content_hash=c.content_hash,
+                            breadcrumbs=c.breadcrumbs or []
+                        )
+                    )
+                    raw_vec = c.embedding
+                    # Handle both list and pgvector Vector object
+                    vec_list.append(list(raw_vec) if hasattr(raw_vec, "__iter__") else raw_vec)
+
+                if chunk_objs and vec_list:
+                    vectors_arr = np.array(vec_list, dtype=np.float32)
+                    self.chunks_by_doc[doc_id] = chunk_objs
+                    self.vectors_by_doc[doc_id] = vectors_arr
+                    self._sync_to_qdrant(doc_id, chunk_objs, vectors_arr)
+                    logger.info(f"Loaded {len(chunk_objs)} chunks for doc {doc_id} directly from database repository into memory/Qdrant cache.")
+        except Exception as repo_err:
+            logger.warning(f"Could not load vector chunks from database repository: {repo_err}")
 
     def _sync_to_qdrant(self, document_id: str, chunks: List[DocumentChunk], normalized_vectors: np.ndarray) -> None:
         """Syncs document vectors and payload metadata into local Qdrant collection."""
@@ -163,6 +223,14 @@ class VectorStore:
         # Sync to Qdrant collection
         self._sync_to_qdrant(document_id, chunks, normalized_vectors)
 
+        # Persist vectors and chunks to database repository if available
+        if self.repository and hasattr(self.repository, "save_document_chunks"):
+            try:
+                self.repository.save_document_chunks(document_id, chunks, normalized_vectors)
+                logger.info(f"Persisted {len(chunks)} chunks and vectors to database repository for {document_id}")
+            except Exception as dberr:
+                logger.warning(f"Failed to persist chunks to database repository for {document_id}: {dberr}")
+
         # Persist vectors and chunks to disk
         np.save(str(self._get_doc_vector_path(document_id)), normalized_vectors)
         with open(self._get_doc_chunks_path(document_id), "w", encoding="utf-8") as f:
@@ -184,7 +252,7 @@ class VectorStore:
         logger.info(f"Stored {len(chunks)} chunks and vectors for document {document_id} in Qdrant [provider={prov}, model={mod}, dim={normalized_vectors.shape[1]}]")
 
     def delete_document(self, document_id: str) -> bool:
-        """Remove document from memory, disk, and Qdrant."""
+        """Remove document from memory, disk, database, and Qdrant."""
         removed = False
         if document_id in self.chunks_by_doc:
             del self.chunks_by_doc[document_id]
@@ -192,6 +260,12 @@ class VectorStore:
         if document_id in self.vectors_by_doc:
             del self.vectors_by_doc[document_id]
             removed = True
+
+        if self.repository and hasattr(self.repository, "delete_document_chunks"):
+            try:
+                self.repository.delete_document_chunks(document_id)
+            except Exception as dberr:
+                logger.warning(f"Failed to delete chunks from database repository for {document_id}: {dberr}")
 
         try:
             col_name = self._get_collection_name(document_id)

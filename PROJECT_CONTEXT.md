@@ -127,8 +127,8 @@ All configuration keys defined in `.env.example`:
    * *Reason*: When `DEMO_MODE=true`, uploads and conversation histories are isolated per browser session via cryptographic HMAC-SHA256 signed cookies (`legal_qa_session`), preventing public test users from seeing or deleting each other's data. Legacy conversation records without session IDs are strictly isolated from new sessions.
 56. **Idempotent Sample Seeding & Schema Migration**:
    * *Reason*: On Render/ephemeral restarts, sample documents from `documents/` are checked by SHA-256 content hash before re-indexing, preventing duplicate records or vectors. Database initialization safely inspects both SQLite `PRAGMA table_info` and PostgreSQL `information_schema.columns` to ensure `session_id` exists without table drops.
-7. **Persistent Data Storage Architecture (PostgreSQL & Cloudflare R2)**:
-   * *Reason*: Document records, conversations, and metadata persist in Neon PostgreSQL via standard SQLAlchemy (`DATABASE_URL`). Document source files persist in private Cloudflare R2 object storage via an abstract `StorageService` interface, retaining local storage for local development (`STORAGE_BACKEND=local|r2`). Missing vector stores are automatically and idempotently rebuilt on startup from persistent files.
+7. **Persistent Data Storage Architecture (Neon PostgreSQL + pgvector & Supabase Storage)**:
+   * *Reason*: Neon PostgreSQL is the single source of truth for both relational entities (`documents`, `conversations`, `messages`, `document_profiles`, `slack_conversation_mappings`) and chunk vector embeddings (`document_chunks` table via `pgvector`). Document source files persist in private Supabase Storage via `SupabaseStorageService` behind the abstract `StorageService` interface (`STORAGE_BACKEND=local|supabase`). Local vector store files and caches are disposable; VectorStore loads directly from Neon DB on application startup or cold container deployment.
 
 ---
 
@@ -139,18 +139,19 @@ All configuration keys defined in `.env.example`:
   PYTHONPATH=. ./venv/bin/pytest <path-to-test>
   ```
 * **Recently Verified Test Results**:
-  * `tests/unit/test_persistence_and_storage.py`: **5 passed in 0.62s** (SQLite/Neon PostgreSQL URL normalization, document record persistence in DB, LocalStorageService, Cloudflare R2 S3-compatible service with mock, and idempotent vector recovery from persistent storage).
-  * `tests/unit/test_demo_safeguards.py`: **7 passed in 2.36s** (Upload blocking, document deletion blocking, cross-session isolation, rate limiting, HMAC cookie signature protection, legacy record isolation, and idempotent sample seeding).
-  * Full regression: `tests/unit/test_persistence_and_storage.py tests/unit/test_demo_safeguards.py tests/integration/ tests/unit/test_security_and_hardening.py tests/unit/test_retrieval_and_store.py`: **32 passed in 5.65s**.
+  * `tests/unit/test_persistence_and_storage.py`: **8 passed in 1.32s** (SQLite/Neon PostgreSQL URL normalization, DocumentRecord DB persistence, LocalStorageService, Supabase Storage service with mock, durable vector chunk persistence in DB, and restart recovery from empty local store).
+  * `tests/unit/test_demo_safeguards.py`: **7 passed in 1.00s** (Upload blocking, document deletion blocking, cross-session isolation, rate limiting, HMAC cookie signature protection, legacy record isolation, and idempotent sample seeding).
+  * `tests/unit/test_security_and_hardening.py`: **10 passed in 27.82s**.
+  * `tests/unit/test_retrieval_and_store.py`: **2 passed in 0.12s**.
 * **Cleanup Rule**: Any test data, temporary PDF, or dummy database records created during test execution must be cleaned up immediately.
 
 ---
 
 ## 8. Current Status & Known Risks
 
-* **Active Objective**: Persistent data storage milestone verified locally.
+* **Active Objective**: Production-ready durable persistence via Neon PostgreSQL + pgvector and Supabase Storage verified.
 * **Known Risks & Configuration Distinctions**:
-  * **Verified Locally**: SQLite & PostgreSQL URL normalization, DocumentRecord DB models/migrations, LocalStorageService, mocked Cloudflare R2 storage, idempotent vector recovery from persistent files, HMAC session isolation, and demo safeguards.
-  * **Requires Live Cloud Credentials**: Live end-to-end communication with Neon PostgreSQL (`DATABASE_URL=postgresql://...`) and live Cloudflare R2 buckets (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`) requires production environment secrets injected at runtime.
+  * **Verified Locally**: SQLite & PostgreSQL URL normalization, DocumentRecord & DocumentChunkModel DB models/migrations, LocalStorageService, Supabase Storage service, durable vector chunk recovery without local files, HMAC session isolation, and demo safeguards.
+  * **Verified Live Cloud**: Neon PostgreSQL (`CREATE EXTENSION IF NOT EXISTS vector;`, `documents` table, `document_chunks` table with pgvector, `conversations`, `messages`), and Supabase Storage bucket (`legal-qa-documents`).
   * In-memory sliding window rate limits protect bursts (`RATE_LIMIT_CHAT_PER_MINUTE=15`) per container lifetime, but do not constitute an external global LLM spend cap if containers restart or across distributed workers.
   * Pytest requires explicit `PYTHONPATH=.` when invoked via `./venv/bin/pytest`.

@@ -11,6 +11,7 @@ from sqlalchemy import (
     Index
 )
 from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector
 from app.persistence.database import Base
 
 
@@ -110,8 +111,31 @@ class SlackConversationMappingModel(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
 
+class DocumentChunkModel(Base):
+    __tablename__ = "document_chunks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    document_id = Column(String(36), ForeignKey("documents.document_id", ondelete="CASCADE"), nullable=False, index=True)
+    chunk_id = Column(String(64), nullable=False, index=True)
+    chunk_index = Column(Integer, nullable=False, default=0)
+    page_number = Column(Integer, nullable=False, default=1)
+    section = Column(String(255), nullable=True)
+    section_number = Column(String(64), nullable=True)
+    section_title = Column(String(255), nullable=True)
+    clause_number = Column(String(64), nullable=True)
+    paragraph_number = Column(Integer, nullable=True)
+    parent_chunk_id = Column(String(64), nullable=True)
+    text = Column(Text, nullable=False)
+    token_count = Column(Integer, nullable=True)
+    content_hash = Column(String(64), nullable=True)
+    breadcrumbs = Column(JSON, nullable=False, default=list)
+    embedding = Column(Vector(), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
 Index("idx_messages_conv_seq", MessageModel.conversation_id, MessageModel.sequence)
 Index("idx_conversations_updated", ConversationModel.updated_at.desc())
 Index("idx_doc_profiles_hash", DocumentProfileModel.content_hash)
 Index("idx_slack_mapping_user", SlackConversationMappingModel.user_id, SlackConversationMappingModel.channel_id)
+Index("idx_doc_chunks_doc_chunk", DocumentChunkModel.document_id, DocumentChunkModel.chunk_id)
 

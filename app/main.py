@@ -45,8 +45,12 @@ async def lifespan(app: FastAPI):
         chunk_overlap=settings.CHUNK_OVERLAP,
         min_chunk_size=settings.MIN_CHUNK_SIZE
     )
+    db_manager = app_state.get("db_manager") or DatabaseManager(db_path=settings.DATABASE_PATH)
+    conversation_repo = app_state.get("conversation_repo") or ConversationRepository(session_factory=db_manager.session_factory)
+    conversation_service = app_state.get("conversation_service") or ConversationService(repository=conversation_repo)
+
     embedding_service = EmbeddingService()
-    vector_store = VectorStore(storage_dir=settings.VECTOR_STORE_DIR)
+    vector_store = VectorStore(storage_dir=settings.VECTOR_STORE_DIR, repository=conversation_repo)
     retrieval_service = RetrievalService(embedding_service, vector_store)
     llm_service = LLMService()
     citation_service = CitationService()
@@ -61,10 +65,6 @@ async def lifespan(app: FastAPI):
     llm_provider = ProviderFactory.get_llm_provider(
         llm_provider_name=settings.LLM_PROVIDER
     )
-
-    db_manager = app_state.get("db_manager") or DatabaseManager(db_path=settings.DATABASE_PATH)
-    conversation_repo = app_state.get("conversation_repo") or ConversationRepository(session_factory=db_manager.session_factory)
-    conversation_service = app_state.get("conversation_service") or ConversationService(repository=conversation_repo)
 
     from app.services.storage_service import get_storage_service
     storage_service = app_state.get("storage_service") or get_storage_service()
