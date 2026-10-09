@@ -284,6 +284,7 @@ function setupEventListeners() {
   if (switchKeepChatBtn && docSwitchDialog) {
     switchKeepChatBtn.addEventListener("click", () => {
       if (pendingSwitchDoc) {
+        // Multi-document continuation in current conversation
         executeSetDocumentContext(pendingSwitchDoc.id, pendingSwitchDoc.name, pendingSwitchDoc.pages, pendingSwitchDoc.chunks, false);
         pendingSwitchDoc = null;
       }
@@ -425,6 +426,7 @@ function setDocumentContext(doc) {
 }
 
 function executeSetDocumentContext(id, name, pages, chunks, startNewChat = false) {
+  const previousDocId = activeDocumentId;
   activeDocumentId = id;
   activeDocumentName = name;
   activeDocumentPages = pages;
@@ -433,6 +435,11 @@ function executeSetDocumentContext(id, name, pages, chunks, startNewChat = false
   if (startNewChat) {
     initNewChatState(id ? { document_id: id, original_filename: name, page_count: pages, chunk_count: chunks } : null);
   } else {
+    // If we changed to a different document and chat is empty or not continuing, ensure stale conv ID is not leaked
+    if (previousDocId && id && previousDocId !== id && chatHistory.length === 0) {
+      activeConversationId = null;
+      localStorage.removeItem("legal_qa_active_conv");
+    }
     updateContextDisplay();
     // If empty chat state is shown, refresh the empty state cards & questions
     if (!chatMessages.querySelector(".message")) {
@@ -884,7 +891,13 @@ async function switchConversation(conversationId) {
 async function loadSavedConversation(conversationId) {
   try {
     const res = await fetch(`/api/conversations/${conversationId}`);
-    if (!res.ok) return;
+    if (!res.ok) {
+      if (res.status === 404) {
+        localStorage.removeItem("legal_qa_active_conv");
+        activeConversationId = null;
+      }
+      return;
+    }
     const result = await res.json();
     const conv = result.data;
     if (!conv) return;

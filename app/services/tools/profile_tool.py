@@ -63,8 +63,7 @@ class DocumentProfileTool:
         Extracts document type, parties, effective date, and key sections deterministically
         from early and structural chunks.
         """
-        chunks_map = getattr(self.document_service.vector_store, "chunks_by_doc", None)
-        chunks = chunks_map.get(doc.document_id, []) if isinstance(chunks_map, dict) else []
+        chunks = self.document_service.get_document_chunks(doc.document_id)
         if not chunks:
             return None
 

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     PORT: int = 8000
     HOST: str = "0.0.0.0"
+    CORS_ALLOWED_ORIGINS: str = "*"
 
     # Ingestion & storage
     UPLOAD_DIR: Path = Path("data/uploads")
@@ -49,8 +50,14 @@ class Settings(BaseSettings):
     MAX_HISTORY_TURNS: int = 3
     MAX_HISTORY_TOKENS: int = 500
 
+    # RAG Provider
+    RAG_PROVIDER: Literal["local", "xai", "grok"] = "local"
+    XAI_API_KEY: str = ""
+    XAI_BASE_URL: str = "https://api.x.ai/v1"
+    XAI_COLLECTION_ID: str = ""
+
     # LLM Provider
-    LLM_PROVIDER: Literal["mock", "openai", "anthropic", "ollama", "gemini", "grok", "mistral", "custom_http"] = "mock"
+    LLM_PROVIDER: Literal["mock", "openai", "anthropic", "ollama", "gemini", "grok", "xai", "mistral", "custom_http"] = "mock"
     LLM_API_KEY: str = ""
     LLM_MODEL: str = "gpt-4o-mini"
     LLM_BASE_URL: str = ""

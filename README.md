@@ -4,15 +4,14 @@ A local legal document question-and-answer application built with FastAPI. It le
 
 ## Features
 
-- Upload legal PDFs
-- Extract text and preserve page metadata
-- Split large documents into searchable chunks
-- Search within a single uploaded document
-- Answer questions using the uploaded contract as the source of truth
-- Return citations with document, page, section, and snippet
-- Refuse to answer when the answer is not in the document
-- Provide a browser-based frontend
-- Run with a local mock LLM by default
+- Upload and parse legal PDFs and contracts with structure-aware chunking
+- Dense semantic search (Gemini Embedding 2 / FastEmbed) + BM25 keyword search fused via Reciprocal Rank Fusion (RRF)
+- Decoupled provider architecture (`RAGProvider` and `LLMProvider`) supporting Local Qdrant, xAI, Gemini, OpenAI
+- Versioned, standalone REST API namespace (`/api/v1`) for seamless integration with external applications
+- Grounded question answering with precise page, clause, section, and snippet citations
+- Built-in multi-turn conversation management
+- Browser-based frontend UI dashboard
+- Comprehensive production migration guide ([PRODUCTION_MIGRATION.md](file:///home/rails/Work/Legal%20QA%20chatbot/PRODUCTION_MIGRATION.md)) and standalone integration guide ([INTEGRATION.md](file:///home/rails/Work/Legal%20QA%20chatbot/INTEGRATION.md))
 
 ## Project Structure
 

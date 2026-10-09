@@ -49,7 +49,16 @@ def get_services():
     cite_s = app_state["citation_service"]
     repo = app_state.get("conversation_repo")
 
-    ev_tool = EvidenceRetrievalTool(retrieval_service=ret_s)
+    from app.providers.factory import ProviderFactory
+    # Always pass the active retrieval_service and vector_store so test overrides are respected
+    rag_p = ProviderFactory.get_rag_provider(
+        retrieval_service=ret_s,
+        vector_store=app_state.get("vector_store"),
+        embedding_service=app_state.get("embedding_service")
+    )
+    llm_p = app_state.get("llm_provider") or ProviderFactory.get_llm_provider()
+
+    ev_tool = EvidenceRetrievalTool(retrieval_service=ret_s, rag_provider=rag_p)
 
     # Build dynamically so test fixtures overriding doc_s, ret_s, llm_s have their active instances wired
     orch = AgentOrchestrator(
@@ -69,9 +78,12 @@ def get_services():
         risk_analyzer=RiskAnalyzer()
     )
 
+
     return {
         "retrieval": ret_s,
         "llm": llm_s,
+        "rag_provider": rag_p,
+        "llm_provider": llm_p,
         "citation": cite_s,
         "document": doc_s,
         "conversation": app_state.get("conversation_service"),

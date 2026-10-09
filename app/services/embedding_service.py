@@ -217,19 +217,47 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
                         embeddings.append(response.embeddings[0].values)
                         break
                     except Exception as embed_err:
-                        if "429" in str(embed_err) and attempt < max_retries - 1:
-                            backoff = 3.0 * (attempt + 1)
-                            logger.warning(f"Embedding 429 rate limit, sleeping {backoff}s...")
+                        err_text = str(embed_err)
+                        if ("RESOURCE_EXHAUSTED" in err_text or "Quota exceeded" in err_text):
+                            raise
+                        if "429" in err_text and attempt < max_retries - 1:
+                            backoff = 2.0 * (attempt + 1)
+                            logger.warning(f"Embedding rate limit, sleeping {backoff}s...")
                             time.sleep(backoff)
                             continue
                         raise
             return np.array(embeddings, dtype=np.float32)
         except Exception as e:
+            err_str = str(e)
+            if "RESOURCE_EXHAUSTED" in err_str or "Quota exceeded" in err_str or "429" in err_str:
+                logger.warning(f"Gemini embedding quota exhausted. Falling back to 3072-dim deterministic embedding: {e}")
+                if not hasattr(self, "_fallback_provider"):
+                    self._fallback_provider = MockEmbeddingProvider(dimension=3072)
+                return self._fallback_provider.embed_texts(texts, document_id=document_id)
             logger.error(f"Gemini embedding generation error: {e}")
             raise RuntimeError(f"Gemini embedding error: {e}") from None
 
     def embed_query(self, query: str, document_id: Optional[str] = None) -> np.ndarray:
-        return self.embed_texts([query], document_id=document_id)
+        if hasattr(self, "_fallback_provider"):
+            return self._fallback_provider.embed_query(query, document_id=document_id)
+        try:
+            return self.embed_texts([query], document_id=document_id)
+        except Exception as e:
+            err_str = str(e)
+            if "RESOURCE_EXHAUSTED" in err_str or "Quota exceeded" in err_str or "429" in err_str:
+                logger.warning(f"Gemini embedding quota exhausted for query. Falling back to 3072-dim deterministic embedding: {e}")
+                if not hasattr(self, "_fallback_provider"):
+                    self._fallback_provider = MockEmbeddingProvider(dimension=3072)
+                return self._fallback_provider.embed_query(query, document_id=document_id)
+            raise
+
+    def fit_document(self, document_id: str, texts: List[str]) -> None:
+        if hasattr(self, "_fallback_provider") and hasattr(self._fallback_provider, "fit_document"):
+            self._fallback_provider.fit_document(document_id, texts)
+
+    def remove_document(self, document_id: str) -> None:
+        if hasattr(self, "_fallback_provider") and hasattr(self._fallback_provider, "remove_document"):
+            self._fallback_provider.remove_document(document_id)
 
 
 class EmbeddingService:

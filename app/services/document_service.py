@@ -5,7 +5,7 @@ import time
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from app.models.document import DocumentMetadata, DocumentChunk
 from app.models.structure import DocumentStructure
 from app.services.pdf_service import PDFService
@@ -39,13 +39,15 @@ class DocumentService:
         vector_store: VectorStore,
         upload_dir: Optional[Path] = None,
         structure_parser: Optional[StructureParser] = None,
-        image_service: Optional[ImageService] = None
+        image_service: Optional[ImageService] = None,
+        rag_provider: Optional[Any] = None
     ):
         self.pdf_service = pdf_service
         self.image_service = image_service or ImageService()
         self.chunking_service = chunking_service
         self.embedding_service = embedding_service
         self.vector_store = vector_store
+        self.rag_provider = rag_provider
         self.structure_parser = structure_parser or StructureParser()
 
         self.upload_dir = upload_dir or settings.UPLOAD_DIR
@@ -290,19 +292,27 @@ class DocumentService:
             embeddings = self.embedding_service.embed_texts(chunk_texts, document_id=doc_id)
             embed_latency_ms = max(0.0, (time.perf_counter() - t_embed_start) * 1000.0)
 
-            # 4. Store in vector database
+            # 4. Store in vector database / RAG provider
             t_index_start = time.perf_counter()
             actual_provider = self.embedding_service.provider_name
             actual_model = self.embedding_service.model_name
             actual_dimension = int(embeddings.shape[1]) if embeddings.ndim > 1 else 0
 
-            self.vector_store.add_document(
-                doc_id,
-                chunks,
-                embeddings,
-                embedding_provider=actual_provider,
-                embedding_model=actual_model
-            )
+            if self.rag_provider is not None and hasattr(self.rag_provider, "ingest_document"):
+                self.rag_provider.ingest_document(
+                    document_id=doc_id,
+                    document_name=original_filename,
+                    chunks=chunks,
+                    embeddings=embeddings
+                )
+            else:
+                self.vector_store.add_document(
+                    doc_id,
+                    chunks,
+                    embeddings,
+                    embedding_provider=actual_provider,
+                    embedding_model=actual_model
+                )
             index_latency_ms = max(0.0, (time.perf_counter() - t_index_start) * 1000.0)
 
             total_latency_ms = max(0.0, (time.perf_counter() - t_process_start) * 1000.0)
@@ -416,6 +426,17 @@ class DocumentService:
     def get_document(self, document_id: str) -> Optional[DocumentMetadata]:
         return self.documents.get(document_id)
 
+    def get_document_chunks(self, document_id: str) -> List[DocumentChunk]:
+        """
+        Retrieves stored document chunks through provider abstraction or internal store.
+        """
+        if self.rag_provider is not None and hasattr(self.rag_provider, "get_document_chunks"):
+            return self.rag_provider.get_document_chunks(document_id)
+        chunks_map = getattr(self.vector_store, "chunks_by_doc", None)
+        if isinstance(chunks_map, dict):
+            return list(chunks_map.get(document_id, []))
+        return []
+
     def get_document_structure(self, document_id: str) -> Optional[DocumentStructure]:
         """Return parsed document structure, parsing on-demand if needed."""
         if document_id in self._structures:
@@ -460,7 +481,11 @@ class DocumentService:
         if file_path.exists():
             file_path.unlink()
 
-        self.vector_store.delete_document(document_id)
+        if self.rag_provider is not None and hasattr(self.rag_provider, "delete_document"):
+            self.rag_provider.delete_document(document_id)
+        else:
+            self.vector_store.delete_document(document_id)
+
         if hasattr(self.embedding_service.provider, "remove_document"):
             self.embedding_service.provider.remove_document(document_id)
         del self.documents[document_id]

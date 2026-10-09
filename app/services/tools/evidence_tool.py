@@ -4,7 +4,7 @@ Encapsulates vector search, document namespace isolation, section filtering,
 and the semantic confidence gate (OPT-003) into a reusable tool.
 """
 import time
-from typing import List, Optional
+from typing import List, Optional, Any
 from app.models.agent import EvidenceResult, EvidenceItem, UncertaintyState
 from app.services.retrieval_service import RetrievalService
 from app.core.config import settings
@@ -12,8 +12,9 @@ from app.core.logging import logger
 
 
 class EvidenceRetrievalTool:
-    def __init__(self, retrieval_service: RetrievalService):
+    def __init__(self, retrieval_service: RetrievalService, rag_provider: Optional[Any] = None):
         self.retrieval_service = retrieval_service
+        self.rag_provider = rag_provider
 
     def search_document_evidence(
         self,
@@ -32,29 +33,51 @@ class EvidenceRetrievalTool:
         all_items: List[EvidenceItem] = []
 
         for doc_id in document_ids:
-            raw_results = self.retrieval_service.retrieve(
-                document_id=doc_id,
-                query=query,
-                top_k=k
-            )
-
-            for chunk, score in raw_results:
-                # Apply section filter if requested
-                if section_filter and chunk.section:
-                    if section_filter.lower() not in chunk.section.lower():
-                        continue
-
-                all_items.append(
-                    EvidenceItem(
-                        document_id=chunk.document_id,
-                        chunk_id=chunk.chunk_id,
-                        page_number=chunk.page_number,
-                        section=chunk.section or "General",
-                        score=round(float(score), 4),
-                        text=chunk.text,
-                        document_name=chunk.document_name
-                    )
+            if self.rag_provider is not None and hasattr(self.rag_provider, "retrieve"):
+                retrieved_chunks = self.rag_provider.retrieve(
+                    document_id=doc_id,
+                    query=query,
+                    top_k=k
                 )
+                for r_chunk in retrieved_chunks:
+                    if section_filter and r_chunk.section:
+                        if section_filter.lower() not in r_chunk.section.lower():
+                            continue
+                    all_items.append(
+                        EvidenceItem(
+                            document_id=r_chunk.document_id,
+                            chunk_id=r_chunk.chunk_id,
+                            page_number=r_chunk.page_number,
+                            section=r_chunk.section or "General",
+                            score=round(float(r_chunk.score), 4),
+                            text=r_chunk.text,
+                            document_name=r_chunk.document_name
+                        )
+                    )
+            else:
+                raw_results = self.retrieval_service.retrieve(
+                    document_id=doc_id,
+                    query=query,
+                    top_k=k
+                )
+
+                for chunk, score in raw_results:
+                    # Apply section filter if requested
+                    if section_filter and chunk.section:
+                        if section_filter.lower() not in chunk.section.lower():
+                            continue
+
+                    all_items.append(
+                        EvidenceItem(
+                            document_id=chunk.document_id,
+                            chunk_id=chunk.chunk_id,
+                            page_number=chunk.page_number,
+                            section=chunk.section or "General",
+                            score=round(float(score), 4),
+                            text=chunk.text,
+                            document_name=chunk.document_name
+                        )
+                    )
 
         # Sort all items by relevance score descending
         all_items.sort(key=lambda x: x.score, reverse=True)

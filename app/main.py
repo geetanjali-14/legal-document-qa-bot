@@ -50,12 +50,24 @@ async def lifespan(app: FastAPI):
     llm_service = LLMService()
     citation_service = CitationService()
 
+    from app.providers.factory import ProviderFactory
+    rag_provider = ProviderFactory.get_rag_provider(
+        rag_provider_name=settings.RAG_PROVIDER,
+        retrieval_service=retrieval_service,
+        vector_store=vector_store,
+        embedding_service=embedding_service
+    )
+    llm_provider = ProviderFactory.get_llm_provider(
+        llm_provider_name=settings.LLM_PROVIDER
+    )
+
     document_service = DocumentService(
         pdf_service=pdf_service,
         image_service=image_service,
         chunking_service=chunking_service,
         embedding_service=embedding_service,
-        vector_store=vector_store
+        vector_store=vector_store,
+        rag_provider=rag_provider
     )
 
     db_manager = app_state.get("db_manager") or DatabaseManager(db_path=settings.DATABASE_PATH)
@@ -80,7 +92,7 @@ async def lifespan(app: FastAPI):
     intent_router = IntentRouter()
     metadata_tool = DocumentMetadataTool(document_service=document_service)
     profile_tool = DocumentProfileTool(document_service=document_service, repository=conversation_repo)
-    evidence_tool = EvidenceRetrievalTool(retrieval_service=retrieval_service)
+    evidence_tool = EvidenceRetrievalTool(retrieval_service=retrieval_service, rag_provider=rag_provider)
     structure_tool = SectionStructureTool(document_service=document_service)
     cross_ref_tool = CrossReferenceTool(document_service=document_service)
     definition_tool = DefinitionTool(document_service=document_service)
@@ -123,6 +135,8 @@ async def lifespan(app: FastAPI):
     app_state["vector_store"] = vector_store
     app_state["retrieval_service"] = retrieval_service
     app_state["llm_service"] = llm_service
+    app_state["rag_provider"] = rag_provider
+    app_state["llm_provider"] = llm_provider
     app_state["citation_service"] = citation_service
     app_state["document_service"] = document_service
     app_state["db_manager"] = db_manager
@@ -156,19 +170,29 @@ app = FastAPI(
 )
 
 # CORS configuration
+raw_cors = settings.CORS_ALLOWED_ORIGINS.strip()
+if raw_cors == "*":
+    cors_origins = ["*"]
+else:
+    cors_origins = [orig.strip() for orig in raw_cors.split(",") if orig.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include API Routers
+# Include Legacy API Routers (for existing frontend and backward compatibility)
 app.include_router(health_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(conversations_router, prefix="/api")
+
+# Include Versioned Public API Router (/api/v1)
+from app.api.v1 import router as v1_router
+app.include_router(v1_router, prefix="/api")
 
 # Static frontend files
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"

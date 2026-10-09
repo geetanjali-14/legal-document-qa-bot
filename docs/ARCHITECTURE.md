@@ -268,3 +268,53 @@ Instead of fragile hardcoded strings (*"Not stated in document"*), the generatio
 
 * **Reranking Engine:** Implementation of cross-encoder rerankers is **DEFERRED** until the Docling + structure-aware chunking + Gemini Embedding 2 + Qdrant + BM25 + RRF baseline is fully verified and benchmarked. Adding a reranker prematurely complicates retrieval debugging.
 * **Ollama Local LLM:** Deferred until after Gemini and OpenAI provider parity is established.
+
+---
+
+## 8. Provider Abstraction & Migration Architecture
+
+### 8.1 Target Architecture
+The application layer is decoupled from concrete AI and vector database providers through provider protocols (`RAGProvider`, `LLMProvider`, `EmbeddingProvider`).
+
+```text
+Frontend
+   ↓
+FastAPI
+   ↓
+Application / Chat Service
+   │
+   ├──────────────→ RAGProvider
+   │                    │
+   │               ┌────┴────┐
+   │               │         │
+   │             Local      xAI
+   │
+   └──────────────→ LLMProvider
+                        │
+                 ┌──────┼──────┐
+                 │      │      │
+               Gemini OpenAI  xAI
+```
+
+### 8.2 Configuration & Provider Switching
+Switching providers is controlled centrally via environment variables:
+
+* **Current Development Configuration:**
+  ```env
+  RAG_PROVIDER=local
+  LLM_PROVIDER=gemini
+  ```
+
+* **Future xAI Configuration:**
+  ```env
+  RAG_PROVIDER=xai
+  LLM_PROVIDER=xai
+  XAI_API_KEY="your-xai-api-key"
+  ```
+
+### 8.3 Migration Boundaries & Data Neutrality
+1. **RAG Boundary (`RAGProvider`):** Ingestion, query retrieval, and document deletion are mediated through `app.providers.interfaces.RAGProvider`. The local implementation (`LocalRAGProvider`) wraps the existing Qdrant + BM25 + RRF pipeline. The xAI adapter (`XAIRAGProvider`) handles remote collections.
+2. **Normalized Retrieval Results (`RetrievedChunk`):** Application services receive normalized `RetrievedChunk` dataclasses rather than Qdrant- or xAI-specific SDK objects.
+3. **LLM Boundary (`LLMProvider`):** Generation is mediated through `app.providers.interfaces.LLMProvider` returning normalized `LLMResponse` objects.
+4. **Stable Application Identifiers:** `document_id`, `conversation_id`, and session metadata remain application-owned and stable across provider migrations.
+5. **No Premature xAI Spending:** When `RAG_PROVIDER=local`, xAI clients are never initialized and require zero xAI credentials or credits. When `RAG_PROVIDER=xai` without credentials, the system raises a clear configuration error rather than silently degrading.

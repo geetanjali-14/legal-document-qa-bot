@@ -228,12 +228,19 @@ class RetrievalService:
         self.last_embedding_latency_ms = max(0.0, (time.perf_counter() - t_embed_start) * 1000.0)
 
         candidate_k = max(k * 4, 20)
-        dense_candidates = self.vector_store.search(
-            document_id=document_id,
-            query_vector=query_vector,
-            top_k=candidate_k,
-            similarity_threshold=sim_threshold
-        )
+        try:
+            dense_candidates = self.vector_store.search(
+                document_id=document_id,
+                query_vector=query_vector,
+                top_k=candidate_k,
+                similarity_threshold=sim_threshold
+            )
+        except Exception as dim_err:
+            if "Dimension mismatch" in str(dim_err):
+                logger.warning(f"Embedding dimension mismatch during dense search: {dim_err}. Falling back to BM25 lexical search.")
+                dense_candidates = []
+            else:
+                raise
         logger.debug(f"[Retrieval Dense] Found {len(dense_candidates)} candidates")
 
         # 2. BM25 retrieval
@@ -247,8 +254,15 @@ class RetrievalService:
             # Map original dense similarity score back onto fused candidates when available
             # (or fallback to normalized RRF score) for downstream confidence threshold evaluation
             fused_with_sim = []
+            max_rrf = fused_candidates[0][1] if fused_candidates else 1.0
             for c, rrf_score in fused_candidates:
-                eff_score = dense_scores_map.get(c.chunk_id, rrf_score)
+                if c.chunk_id in dense_scores_map:
+                    eff_score = dense_scores_map[c.chunk_id]
+                elif not dense_candidates:
+                    # When dense retrieval is unavailable/mismatched, normalize top BM25 ranks
+                    eff_score = min(0.85, (rrf_score / max_rrf) * 0.75) if max_rrf > 0 else rrf_score
+                else:
+                    eff_score = rrf_score
                 fused_with_sim.append((c, eff_score))
             fused_candidates = fused_with_sim
         else:

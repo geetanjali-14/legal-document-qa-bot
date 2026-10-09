@@ -15,7 +15,11 @@ CONTEXT_END_TAG = "</context_document_data>"
 
 SYSTEM_PROMPT = """You are a document-grounded legal information assistant.
 
-Answer the user's question using ONLY the provided document context enclosed within <context_document_data>...</context_document_data>.
+Answer the user's question directly and concisely using ONLY the provided document context enclosed within <context_document_data>...</context_document_data>.
+State the direct answer first. Do not restate the question, and do not open with generic introductory phrases like "Based on the provided document", "According to Section...", or summary overviews.
+Write in clear, natural prose using short paragraphs. Avoid document-style formatting, excessive or nested bullet points, repetition, and unnecessary markdown headings (###). Use bullet points or numbering only when presenting lists or multi-step criteria where they genuinely enhance readability.
+Keep your answer proportional to the question.
+Preserve every critical legal and policy detail exactly as stated in the context: dates, conditions, thresholds, exceptions, qualifiers, formulas, and definitions.
 Do not use unsupported facts.
 Do not invent clauses, dates, amounts, obligations, rights, or legal conclusions.
 If the answer cannot be determined from the provided context, explicitly state:
@@ -391,7 +395,12 @@ class GeminiLLMProvider(BaseLLMProvider):
                 break
 
         if response is None:
-            raise RuntimeError("All configured Gemini models exhausted quota or failed.")
+            logger.warning("Gemini generation quota exhausted across candidate models. Falling back to local grounded synthesis.")
+            fallback = MockLLMProvider()
+            res = fallback.generate_answer(question, context_chunks, history)
+            res.provider = "gemini-fallback"
+            res.model = self.model
+            return res
 
         latency_ms = max(0.0, (time.perf_counter() - t_start) * 1000.0)
 
