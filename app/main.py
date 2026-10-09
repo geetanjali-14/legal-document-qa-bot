@@ -62,18 +62,24 @@ async def lifespan(app: FastAPI):
         llm_provider_name=settings.LLM_PROVIDER
     )
 
+    db_manager = app_state.get("db_manager") or DatabaseManager(db_path=settings.DATABASE_PATH)
+    conversation_repo = app_state.get("conversation_repo") or ConversationRepository(session_factory=db_manager.session_factory)
+    conversation_service = app_state.get("conversation_service") or ConversationService(repository=conversation_repo)
+
+    from app.services.storage_service import get_storage_service
+    storage_service = app_state.get("storage_service") or get_storage_service()
+
     document_service = DocumentService(
         pdf_service=pdf_service,
         image_service=image_service,
         chunking_service=chunking_service,
         embedding_service=embedding_service,
         vector_store=vector_store,
-        rag_provider=rag_provider
+        rag_provider=rag_provider,
+        storage_service=storage_service,
+        repository=conversation_repo
     )
 
-    db_manager = app_state.get("db_manager") or DatabaseManager(db_path=settings.DATABASE_PATH)
-    conversation_repo = app_state.get("conversation_repo") or ConversationRepository(session_factory=db_manager.session_factory)
-    conversation_service = app_state.get("conversation_service") or ConversationService(repository=conversation_repo)
     # Defensive cleanup on startup: prune any old empty conversations
     try:
         conversation_service.cleanup_empty_conversations()
@@ -133,6 +139,20 @@ async def lifespan(app: FastAPI):
                     document_service.process_document(content, sample_file.name)
             except Exception as seed_err:
                 logger.warning(f"Could not index demo document {sample_file.name}: {seed_err}")
+
+    # Idempotently rebuild vectors for any registered documents if vector index is missing or wiped
+    for doc in document_service.list_documents():
+        if not vector_store.has_document(doc.document_id):
+            logger.info(f"Vector data missing for persisted document {doc.document_id} ({doc.original_filename}). Rebuilding index...")
+            try:
+                file_bytes = storage_service.get_file_bytes(doc.filename)
+                if file_bytes:
+                    document_service.process_document(file_bytes, doc.original_filename)
+                    logger.info(f"Successfully rebuilt vector index for {doc.document_id}")
+                else:
+                    logger.warning(f"Cannot rebuild index for {doc.document_id}: file bytes missing from storage.")
+            except Exception as rebuild_err:
+                logger.error(f"Failed to rebuild vector index for document {doc.document_id}: {rebuild_err}")
 
     # Sync vocabulary provider with any pre-loaded vector store chunks across restarts
     if hasattr(embedding_service.provider, "fit_document"):

@@ -192,7 +192,7 @@ async def ask_question(
                         detail=f"Conversation with ID '{request.conversation_id}' was not found."
                     )
                 # Session isolation check in DEMO_MODE: prevent cross-session access
-                if settings.DEMO_MODE and raw_conv.session_id and raw_conv.session_id != session_id:
+                if settings.DEMO_MODE and (raw_conv.session_id != session_id):
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail=f"Conversation with ID '{request.conversation_id}' was not found."

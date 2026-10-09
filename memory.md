@@ -196,3 +196,20 @@ Always practice token-optimized programming and communication:
 * **Targeted Code Changes**: Avoid rewriting entire files or large untouched blocks when small, precise diffs suffice.
 * **Tool & Output Discipline**: Inspect only relevant line ranges or snippets rather than dumping entire large files when unneeded.
 
+---
+
+## 12. PROJECT FOUNDATIONS & PERMANENT CONSTRAINTS
+
+* **Domain & Core Invariant**: Legal contract Q&A assistant. Every generative claim must be verified against source citations (page, section/clause, verbatim snippet). Never return ungrounded answers.
+* **Core Architecture**:
+  * Hybrid retrieval (dense vectors + BM25 keyword search fused via Reciprocal Rank Fusion / RRF).
+  * Structure-aware chunking preserving legal hierarchies (Articles, Sections, Clauses) over arbitrary character slicing.
+  * Zero-token deterministic tools prioritized for metadata, navigation, and document overview before invoking LLM synthesis.
+  * Pluggable provider architecture for LLMs (Groq, Gemini, OpenAI, Mock) and vector stores (local numpy, Qdrant).
+* **Storage Invariants**: SQLite in WAL mode (`data/legal_qa.db`) for conversations and document records; pluggable PostgreSQL support. Never expose secrets or hardcode API keys.
+* **Demo / Production Safeguard Rule**: In `DEMO_MODE=true`, uploads and conversations must remain strictly isolated per session token with active rate limiting.
+* **Memory Protocol**:
+  * `memory.md`: Permanent operating rules, long-term architectural foundations, and permanent constraints.
+  * `PROJECT_CONTEXT.md`: Single source of truth for full architecture, modules, config keys, and verified technical baseline.
+  * `CURRENT_STATUS.md`: Ephemeral session state, active objective, blockers, and next immediate actions.
+

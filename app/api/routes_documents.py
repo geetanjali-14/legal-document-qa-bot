@@ -140,9 +140,13 @@ async def get_document_file(document_id: str, doc_service: DocumentService = Dep
             detail=f"Document with ID {document_id} was not found."
         )
 
-    file_path = (doc_service.upload_dir / doc.filename).resolve()
+    file_path = doc_service.storage_service.get_local_path(doc.filename)
+    if not file_path or not file_path.exists():
+        # Fallback to upload_dir
+        file_path = (doc_service.upload_dir / doc.filename).resolve()
+
     upload_root = doc_service.upload_dir.resolve()
-    if not str(file_path).startswith(str(upload_root)) or not file_path.exists():
+    if not file_path.exists() or not str(file_path.resolve()).startswith(str(upload_root)):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Stored file for document {document_id} was not found."

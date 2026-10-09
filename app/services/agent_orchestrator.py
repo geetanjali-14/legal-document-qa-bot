@@ -188,7 +188,8 @@ class AgentOrchestrator:
             (r"\b(severability)\b", "severability"),
             (r"\b(assignment)\b", "assignment"),
             (r"\b(amendment)\b", "amendment"),
-            (r"\b(warranty|warranties)\b", "warranties")
+            (r"\b(warranty|warranties)\b", "warranties"),
+            (r"\b(summary\s+of\s+(?:this|the)\s+document|document\s+summary|overview|what\s+is\s+this\s+document\s+about)\b", "document summary")
         ]
 
         for msg in history:
@@ -271,7 +272,8 @@ class AgentOrchestrator:
             (r"\b(notice\s+period)\b", "notice period"),
             (r"\b(holdover\s+damages)\b", "holdover damages"),
             (r"\b(severability)\b", "severability"),
-            (r"\b(assignment)\b", "assignment")
+            (r"\b(assignment)\b", "assignment"),
+            (r"\b(summary\s+of\s+(?:this|the)\s+document|document\s+summary|overview|what\s+is\s+this\s+document\s+about)\b", "document summary")
         ]
         for cp, canon in concept_patterns:
             if re.search(cp, user_str, re.IGNORECASE):
@@ -387,6 +389,23 @@ class AgentOrchestrator:
             (r"\babout\s+this\b", f"about {topic}"),
         ]
 
+        # Check for conversational refinement/expansion/condensation follow-ups
+        is_expansion = bool(re.search(r"\b(elaborat\w*|expand(?:\s+on\s+it|\s+further)?|explain(?:\s+in\s+more\s+detail)?|more\s+details?|tell\s+me\s+more)\b", q_lower))
+        is_brevity = bool(re.search(r"\b((?:in\s+a\s+(?:little\s+)?precise\s+way)|make\s+it\s+(?:shorter|concise|brief)|be\s+more\s+concise|summarize\s+it|shorten\s+it|concise(?:\s+version)?|briefly)\b", q_lower))
+
+        if (is_expansion or is_brevity) and len(query.split()) <= 10:
+            target_topic = topic or (last_user_turn or "document summary")
+            if target_topic == "document summary":
+                if is_expansion:
+                    enriched = f"Elaborate on the document summary and major provisions"
+                else:
+                    enriched = f"Concise summary of this document in a little precise way"
+            else:
+                base_query = last_user_turn if last_user_turn and len(last_user_turn.split()) <= 12 else target_topic
+                enriched = base_query
+            logger.info(f"[AgentOrchestrator] Refinement follow-up contextualized: '{query}' -> '{enriched}'")
+            return enriched
+
         if topic:
             for pat, repl in pronoun_patterns:
                 if re.search(pat, query, re.IGNORECASE):
@@ -407,7 +426,7 @@ class AgentOrchestrator:
                 return resolved
 
         # Generic short follow-up fallback
-        follow_up_cues = ["what about it", "tell me more", "how about that"]
+        follow_up_cues = ["what about it", "tell me more", "how about that", "elaborate", "explain more"]
         if (any(cue in q_lower for cue in follow_up_cues) or q_lower.startswith(("and ", "what about ", "why "))) and last_user_turn and len(query.split()) <= 6:
             enriched = f"{query} regarding {last_user_turn}"
             logger.info(f"[AgentOrchestrator] Enriched short follow-up query: '{query}' -> '{enriched}'")

@@ -2,7 +2,13 @@ from typing import List, Optional, Tuple
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
-from app.persistence.models import ConversationModel, MessageModel, DocumentProfileModel, utc_now
+from app.persistence.models import (
+    ConversationModel,
+    MessageModel,
+    DocumentProfileModel,
+    DocumentRecordModel,
+    utc_now
+)
 from app.core.logging import logger
 
 
@@ -312,5 +318,90 @@ class ConversationRepository:
             if not profile:
                 return False
             session.delete(profile)
+            session.commit()
+            return True
+
+    def save_document_record(self, meta_dict: dict) -> DocumentRecordModel:
+        """Create or update DocumentRecordModel in database."""
+        from app.persistence.models import DocumentRecordModel
+        doc_id = meta_dict["document_id"]
+        with self.session_factory() as session:
+            existing = session.query(DocumentRecordModel).filter(
+                DocumentRecordModel.document_id == doc_id
+            ).first()
+            if existing:
+                for k, v in meta_dict.items():
+                    if hasattr(existing, k):
+                        setattr(existing, k, v)
+                session.commit()
+                session.refresh(existing)
+                session.expunge(existing)
+                return existing
+            else:
+                doc = DocumentRecordModel(
+                    document_id=doc_id,
+                    filename=meta_dict.get("filename", ""),
+                    original_filename=meta_dict.get("original_filename", ""),
+                    file_size_bytes=meta_dict.get("file_size_bytes", 0),
+                    page_count=meta_dict.get("page_count", 0),
+                    chunk_count=meta_dict.get("chunk_count", 0),
+                    mime_type=meta_dict.get("mime_type"),
+                    content_hash=meta_dict.get("content_hash", ""),
+                    document_type=meta_dict.get("document_type"),
+                    processing_status=meta_dict.get("processing_status", "completed"),
+                    ocr_status=meta_dict.get("ocr_status", "not_required"),
+                    parser_version=meta_dict.get("parser_version", "v2.0"),
+                    embedding_version=meta_dict.get("embedding_version", "v2.0"),
+                    embedding_provider=meta_dict.get("embedding_provider"),
+                    embedding_model=meta_dict.get("embedding_model"),
+                    embedding_dimension=meta_dict.get("embedding_dimension"),
+                    status=meta_dict.get("status", "processed"),
+                    error_message=meta_dict.get("error_message"),
+                    doc_type=meta_dict.get("doc_type", "pdf"),
+                    upload_timestamp=meta_dict.get("upload_timestamp"),
+                )
+                session.add(doc)
+                session.commit()
+                session.refresh(doc)
+                session.expunge(doc)
+                return doc
+
+    def list_document_records(self) -> List[DocumentRecordModel]:
+        """List all DocumentRecordModel entities."""
+        from app.persistence.models import DocumentRecordModel
+        with self.session_factory() as session:
+            docs = session.query(DocumentRecordModel).order_by(DocumentRecordModel.created_at.desc()).all()
+            session.expunge_all()
+            return docs
+
+    def get_document_record(self, document_id: str) -> Optional[DocumentRecordModel]:
+        from app.persistence.models import DocumentRecordModel
+        with self.session_factory() as session:
+            doc = session.query(DocumentRecordModel).filter(
+                DocumentRecordModel.document_id == document_id
+            ).first()
+            if doc:
+                session.expunge(doc)
+            return doc
+
+    def find_document_record_by_hash(self, content_hash: str) -> Optional[DocumentRecordModel]:
+        from app.persistence.models import DocumentRecordModel
+        with self.session_factory() as session:
+            doc = session.query(DocumentRecordModel).filter(
+                DocumentRecordModel.content_hash == content_hash
+            ).first()
+            if doc:
+                session.expunge(doc)
+            return doc
+
+    def delete_document_record(self, document_id: str) -> bool:
+        from app.persistence.models import DocumentRecordModel
+        with self.session_factory() as session:
+            doc = session.query(DocumentRecordModel).filter(
+                DocumentRecordModel.document_id == document_id
+            ).first()
+            if not doc:
+                return False
+            session.delete(doc)
             session.commit()
             return True

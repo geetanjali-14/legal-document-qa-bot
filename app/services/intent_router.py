@@ -34,6 +34,10 @@ OVERVIEW_PATTERNS = [
     r"\bwhat\s+is\s+this\s+document\s+about\b",
     r"\bgive\s+me\s+an\s+overview\b",
     r"\bsummarize\s+(?:this|the)\s+document\b",
+    r"\b(?:detailed\s+)?summary\s+of\s+(?:this|the)\s+document\b",
+    r"\bexplain\s+(?:me\s+)?(?:the\s+)?(?:detailed\s+)?summary\s+of\s+(?:this|the)\s+document\b",
+    r"\belaborate\s+(?:on\s+)?(?:the\s+)?document\s+summary\b",
+    r"\bconcise\s+summary\s+of\s+(?:this|the)\s+document\b",
     r"\bdocument\s+summary\b",
     r"\bexecutive\s+summary\b",
     r"\bwho\s+are\s+the\s+parties\b",
@@ -312,5 +316,9 @@ class IntentRouter:
             return "document_type"
         if "topics" in q:
             return "topics"
+        if any(w in q for w in ["precise", "concise", "shorter", "brief", "shorten"]):
+            return "concise"
+        if any(w in q for w in ["elaborate", "expand", "detailed", "more details", "in detail"]):
+            return "elaborate"
         return "summary"
 

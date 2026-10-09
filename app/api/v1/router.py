@@ -388,7 +388,7 @@ async def v1_get_conversation(
     raw_conv = conv_service.repository.get_conversation(conversation_id)
     if not raw_conv:
         return json_error(status.HTTP_404_NOT_FOUND, "CONVERSATION_NOT_FOUND", f"Conversation '{conversation_id}' not found.")
-    if settings.DEMO_MODE and raw_conv.session_id and raw_conv.session_id != session_id:
+    if settings.DEMO_MODE and (raw_conv.session_id != session_id):
         return json_error(status.HTTP_404_NOT_FOUND, "CONVERSATION_NOT_FOUND", f"Conversation '{conversation_id}' not found.")
 
     conv = conv_service.get_conversation(conversation_id)

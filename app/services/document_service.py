@@ -14,6 +14,8 @@ from app.services.chunking_service import ChunkingService
 from app.services.structure_parser import StructureParser
 from app.services.embedding_service import EmbeddingService
 from app.services.vector_store import VectorStore
+from app.services.storage_service import StorageService, get_storage_service
+from app.persistence.repository import ConversationRepository
 import io
 from PIL import Image
 from app.core.config import settings
@@ -40,7 +42,9 @@ class DocumentService:
         upload_dir: Optional[Path] = None,
         structure_parser: Optional[StructureParser] = None,
         image_service: Optional[ImageService] = None,
-        rag_provider: Optional[Any] = None
+        rag_provider: Optional[Any] = None,
+        storage_service: Optional[StorageService] = None,
+        repository: Optional[ConversationRepository] = None
     ):
         self.pdf_service = pdf_service
         self.image_service = image_service or ImageService()
@@ -49,6 +53,8 @@ class DocumentService:
         self.vector_store = vector_store
         self.rag_provider = rag_provider
         self.structure_parser = structure_parser or StructureParser()
+        self.storage_service = storage_service or get_storage_service()
+        self.repository = repository
 
         self.upload_dir = upload_dir or settings.UPLOAD_DIR
         self.upload_dir.mkdir(parents=True, exist_ok=True)
@@ -59,6 +65,43 @@ class DocumentService:
         self._load_metadata()
 
     def _load_metadata(self) -> None:
+        # 1. Load from DB repository if available (Postgres / SQLite)
+        if self.repository is not None:
+            try:
+                records = self.repository.list_document_records()
+                for rec in records:
+                    meta = DocumentMetadata(
+                        document_id=rec.document_id,
+                        filename=rec.filename,
+                        original_filename=rec.original_filename,
+                        file_size_bytes=rec.file_size_bytes,
+                        page_count=rec.page_count,
+                        chunk_count=rec.chunk_count,
+                        mime_type=rec.mime_type,
+                        content_hash=rec.content_hash,
+                        document_type=rec.document_type,
+                        processing_status=rec.processing_status,
+                        ocr_status=rec.ocr_status,
+                        parser_version=rec.parser_version,
+                        embedding_version=rec.embedding_version,
+                        embedding_provider=rec.embedding_provider,
+                        embedding_model=rec.embedding_model,
+                        embedding_dimension=rec.embedding_dimension,
+                        status=rec.status,
+                        error_message=rec.error_message,
+                        doc_type=rec.doc_type,
+                        upload_timestamp=rec.upload_timestamp,
+                        created_at=rec.created_at
+                    )
+                    self.documents[meta.document_id] = meta
+                    if meta.content_hash:
+                        self._hash_to_id[meta.content_hash] = meta.document_id
+                if records:
+                    logger.info(f"Loaded {len(records)} document records from database.")
+            except Exception as dberr:
+                logger.warning(f"Failed to load document records from database: {dberr}")
+
+        # 2. Also load from documents_meta.json file if present, and backfill into DB if needed
         if self.metadata_file.exists():
             try:
                 with open(self.metadata_file, "r", encoding="utf-8") as f:
@@ -68,24 +111,27 @@ class DocumentService:
                         meta = DocumentMetadata(**item)
                         # Backfill content_hash if missing from historical metadata
                         if not meta.content_hash:
-                            saved_path = self.upload_dir / meta.filename
-                            if saved_path.exists():
-                                try:
-                                    with open(saved_path, "rb") as f_bytes:
-                                        meta.content_hash = hashlib.sha256(f_bytes.read()).hexdigest()
-                                    updated = True
-                                    logger.info(f"Backfilled content_hash for document {meta.document_id}")
-                                except Exception as err:
-                                    logger.warning(f"Could not backfill hash for {meta.document_id}: {err}")
+                            content_bytes = self.storage_service.get_file_bytes(meta.filename)
+                            if content_bytes:
+                                meta.content_hash = hashlib.sha256(content_bytes).hexdigest()
+                                updated = True
+                                logger.info(f"Backfilled content_hash for document {meta.document_id}")
 
-                        self.documents[meta.document_id] = meta
-                        if meta.content_hash:
-                            self._hash_to_id[meta.content_hash] = meta.document_id
+                        if meta.document_id not in self.documents:
+                            self.documents[meta.document_id] = meta
+                            if meta.content_hash:
+                                self._hash_to_id[meta.content_hash] = meta.document_id
+                            # Sync to DB if repo active
+                            if self.repository is not None:
+                                try:
+                                    self.repository.save_document_record(meta.model_dump(mode="json"))
+                                except Exception as sync_err:
+                                    logger.warning(f"Could not sync file record to DB for {meta.document_id}: {sync_err}")
 
                     if updated:
                         self._save_metadata()
 
-                logger.info(f"Loaded {len(self.documents)} document records from metadata store.")
+                logger.info(f"Loaded {len(self.documents)} total document records into memory cache.")
             except Exception as e:
                 logger.error(f"Failed to load document metadata: {e}")
 
@@ -95,6 +141,14 @@ class DocumentService:
                 json.dump([d.model_dump(mode="json") for d in self.documents.values()], f, indent=2)
         except Exception as e:
             logger.error(f"Failed to save document metadata: {e}")
+
+        # Persist to database repository if available
+        if self.repository is not None:
+            for doc in self.documents.values():
+                try:
+                    self.repository.save_document_record(doc.model_dump(mode="json"))
+                except Exception as dberr:
+                    logger.warning(f"Failed to save document record {doc.document_id} to DB: {dberr}")
 
     def sanitize_filename(self, filename: str) -> str:
         """Prevent path traversal and clean malicious filename characters."""
@@ -111,6 +165,36 @@ class DocumentService:
             if doc.content_hash == content_hash:
                 self._hash_to_id[content_hash] = doc.document_id
                 return doc
+
+        if self.repository is not None:
+            rec = self.repository.find_document_record_by_hash(content_hash)
+            if rec:
+                meta = DocumentMetadata(
+                    document_id=rec.document_id,
+                    filename=rec.filename,
+                    original_filename=rec.original_filename,
+                    file_size_bytes=rec.file_size_bytes,
+                    page_count=rec.page_count,
+                    chunk_count=rec.chunk_count,
+                    mime_type=rec.mime_type,
+                    content_hash=rec.content_hash,
+                    document_type=rec.document_type,
+                    processing_status=rec.processing_status,
+                    ocr_status=rec.ocr_status,
+                    parser_version=rec.parser_version,
+                    embedding_version=rec.embedding_version,
+                    embedding_provider=rec.embedding_provider,
+                    embedding_model=rec.embedding_model,
+                    embedding_dimension=rec.embedding_dimension,
+                    status=rec.status,
+                    error_message=rec.error_message,
+                    doc_type=rec.doc_type,
+                    upload_timestamp=rec.upload_timestamp,
+                    created_at=rec.created_at
+                )
+                self.documents[meta.document_id] = meta
+                self._hash_to_id[content_hash] = meta.document_id
+                return meta
         return None
 
     def detect_document_type(self, file_bytes: bytes, filename: str) -> str:
@@ -165,14 +249,7 @@ class DocumentService:
 
         # Check for existing duplicate document by content hash
         existing_doc = self.find_by_content_hash(content_hash)
-        if existing_doc:
-            # Check for corrupt/inconsistent state: metadata exists but vector store data missing
-            if not self.vector_store.has_document(existing_doc.document_id):
-                raise RuntimeError(
-                    f"Document {existing_doc.document_id} metadata exists with matching hash "
-                    f"but vector data is unexpectedly missing or corrupted."
-                )
-
+        if existing_doc and self.vector_store.has_document(existing_doc.document_id):
             # Validate that existing document's indexed vectors match current embedding configuration
             current_provider = self.embedding_service.provider_name.lower()
             current_model = self.embedding_service.model_name
@@ -240,12 +317,20 @@ class DocumentService:
                     del self._hash_to_id[content_hash]
 
         # Document does not exist or requires re-indexing: proceed with standard ingestion
-        doc_id = f"doc_{uuid.uuid4().hex[:12]}"
-        safe_name = f"{doc_id}_{self.sanitize_filename(original_filename)}"
-        saved_path = self.upload_dir / safe_name
+        if existing_doc:
+            doc_id = existing_doc.document_id
+            safe_name = existing_doc.filename
+        else:
+            doc_id = f"doc_{uuid.uuid4().hex[:12]}"
+            safe_name = f"{doc_id}_{self.sanitize_filename(original_filename)}"
 
-        with open(saved_path, "wb") as f:
-            f.write(file_bytes)
+        saved_name = self.storage_service.save_file(safe_name, file_bytes)
+        saved_path = self.storage_service.get_local_path(saved_name)
+        if saved_path is None:
+            # Fallback local path
+            saved_path = self.upload_dir / safe_name
+            if not saved_path.exists():
+                saved_path.write_bytes(file_bytes)
 
         try:
             # 1. Extract text and pages (via PDFService or ImageService OCR)
@@ -384,13 +469,16 @@ class DocumentService:
 
         except Exception as e:
             # Clean up on failure
-            if saved_path.exists():
+            self.storage_service.delete_file(safe_name)
+            if saved_path and saved_path.exists():
                 saved_path.unlink()
             self.vector_store.delete_document(doc_id)
             if doc_id in self.documents:
                 del self.documents[doc_id]
             if content_hash in self._hash_to_id:
                 del self._hash_to_id[content_hash]
+            if self.repository is not None:
+                self.repository.delete_document_record(doc_id)
 
             # Record failure / rejection telemetry
             t_err_end = time.perf_counter()
@@ -446,9 +534,16 @@ class DocumentService:
         if not doc:
             return None
 
-        # Attempt to parse on-demand from disk if file exists
-        saved_path = self.upload_dir / doc.filename
-        if saved_path.exists():
+        # Attempt to parse on-demand from disk/storage if file exists
+        saved_path = self.storage_service.get_local_path(doc.filename)
+        if not saved_path or not saved_path.exists():
+            file_bytes = self.storage_service.get_file_bytes(doc.filename)
+            if file_bytes:
+                local_fallback = self.upload_dir / doc.filename
+                local_fallback.write_bytes(file_bytes)
+                saved_path = local_fallback
+
+        if saved_path and saved_path.exists():
             try:
                 ext = saved_path.suffix.lower()
                 if ext in settings.SUPPORTED_IMAGE_EXTENSIONS:
@@ -477,6 +572,7 @@ class DocumentService:
         if document_id in self._structures:
             del self._structures[document_id]
 
+        self.storage_service.delete_file(meta.filename)
         file_path = self.upload_dir / meta.filename
         if file_path.exists():
             file_path.unlink()
@@ -489,6 +585,8 @@ class DocumentService:
         if hasattr(self.embedding_service.provider, "remove_document"):
             self.embedding_service.provider.remove_document(document_id)
         del self.documents[document_id]
+        if self.repository is not None:
+            self.repository.delete_document_record(document_id)
         self._save_metadata()
         logger.info(f"Deleted document {document_id}")
         return True

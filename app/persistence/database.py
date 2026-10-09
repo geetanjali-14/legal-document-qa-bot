@@ -19,6 +19,9 @@ class DatabaseManager:
         try:
             if settings.DATABASE_URL:
                 db_url = settings.DATABASE_URL
+                if db_url.startswith("postgres://"):
+                    # Standardize legacy Heroku/Render dialect string
+                    db_url = "postgresql://" + db_url[len("postgres://"):]
                 is_sqlite = db_url.startswith("sqlite")
             else:
                 self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -35,7 +38,7 @@ class DatabaseManager:
                     conn.exec_driver_sql("PRAGMA journal_mode=WAL;")
                     conn.exec_driver_sql("PRAGMA foreign_keys=ON;")
             else:
-                # Production PostgreSQL connection pooling
+                # Production PostgreSQL connection pooling (Neon / standard Postgres)
                 self.engine = create_engine(
                     db_url,
                     pool_pre_ping=True,
@@ -60,7 +63,16 @@ class DatabaseManager:
                         if "session_id" not in cols:
                             conn.exec_driver_sql("ALTER TABLE conversations ADD COLUMN session_id VARCHAR(64);")
                             conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_conversations_session_id ON conversations(session_id);")
-                            logger.info("Migrated conversations table: added session_id column.")
+                            logger.info("Migrated conversations table (SQLite): added session_id column.")
+                    else:
+                        # PostgreSQL migration
+                        col_exists = conn.exec_driver_sql(
+                            "SELECT 1 FROM information_schema.columns WHERE table_name = 'conversations' AND column_name = 'session_id';"
+                        ).scalar()
+                        if not col_exists:
+                            conn.exec_driver_sql("ALTER TABLE conversations ADD COLUMN session_id VARCHAR(64);")
+                            conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_conversations_session_id ON conversations(session_id);")
+                            logger.info("Migrated conversations table (PostgreSQL): added session_id column.")
             except Exception as mig_err:
                 logger.warning(f"Session column migration check skipped/warning: {mig_err}")
 

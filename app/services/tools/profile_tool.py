@@ -220,6 +220,28 @@ class DocumentProfileTool:
         elif aspect == "topics":
             topics_items = "\n".join(f"* {t}" for t in profile.major_topics[:8])
             return f"The major sections and topics covered in this document are:\n\n{topics_items}"
+        elif aspect == "concise":
+            # Concise, direct executive summary without bullet lists
+            return profile.executive_summary.strip()
+        elif aspect == "elaborate":
+            # Elaborated overview: executive summary + all key attributes and provisions
+            lines = [profile.executive_summary]
+            bullets = []
+            if profile.parties:
+                bullets.append(f"* **Parties:** {', '.join(profile.parties)}")
+            if profile.effective_date:
+                bullets.append(f"* **Effective Date:** {profile.effective_date}")
+            if profile.major_topics and profile.major_topics != ["General Provisions"]:
+                filtered_topics = [
+                    t for t in profile.major_topics
+                    if t.lower() != profile.document_type.lower() and t.lower() not in profile.document_type.lower()
+                ]
+                display_topics = filtered_topics if filtered_topics else profile.major_topics
+                if display_topics:
+                    bullets.append(f"* **Major Sections & Provisions:** {', '.join(display_topics[:10])}")
+            if bullets:
+                lines.append("\n" + "\n".join(bullets))
+            return "\n".join(lines).strip()
         else:
             lines = [profile.executive_summary]
             bullets = []

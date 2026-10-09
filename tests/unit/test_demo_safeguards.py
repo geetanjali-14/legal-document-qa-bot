@@ -106,3 +106,42 @@ def test_session_cookie_signature_tamper_protection():
     valid_signed = sign_session_id("sess_real_user", secret)
     verified_valid = verify_session_cookie(valid_signed, secret)
     assert verified_valid == "sess_real_user"
+
+
+def test_legacy_conversation_with_no_session_isolated_in_demo_mode():
+    settings.DEMO_MODE = True
+    with TestClient(app) as client:
+        from app.main import app_state
+        repo = app_state["conversation_repo"]
+        # Create legacy conversation without session_id
+        legacy_conv = repo.create_conversation(title="Legacy Confidential Chat", session_id=None)
+        conv_id = legacy_conv.conversation_id
+
+        # Visitor with session cookie attempts to access legacy conversation: rejected with 404
+        res_get = client.get(f"/api/conversations/{conv_id}")
+        assert res_get.status_code == 404
+
+        v1_res_get = client.get(f"/api/v1/conversations/{conv_id}")
+        assert v1_res_get.status_code == 404
+
+        # Visitor attempts to chat into legacy conversation: rejected with 404
+        res_chat = client.post(f"/api/chat", json={"question": "What is here?", "conversation_id": conv_id})
+        assert res_chat.status_code == 404
+
+
+def test_sample_document_idempotent_seeding():
+    settings.DEMO_MODE = True
+    with TestClient(app) as client:
+        from app.main import app_state
+        doc_service = app_state["document_service"]
+        initial_doc_count = len(doc_service.list_documents())
+
+        # Simulate startup seed re-run
+        for sample_file in sorted(settings.DEMO_DOCUMENTS_DIR.glob("*.pdf")):
+            content = sample_file.read_bytes()
+            import hashlib
+            h = hashlib.sha256(content).hexdigest()
+            existing = doc_service.find_by_content_hash(h)
+            assert existing is not None  # Must already be found
+
+        assert len(doc_service.list_documents()) == initial_doc_count

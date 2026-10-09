@@ -54,6 +54,32 @@ class MessageModel(Base):
     conversation = relationship("ConversationModel", back_populates="messages")
 
 
+class DocumentRecordModel(Base):
+    __tablename__ = "documents"
+
+    document_id = Column(String(36), primary_key=True)
+    filename = Column(String(255), nullable=False)
+    original_filename = Column(String(255), nullable=False)
+    file_size_bytes = Column(Integer, nullable=False, default=0)
+    page_count = Column(Integer, nullable=False, default=0)
+    chunk_count = Column(Integer, nullable=False, default=0)
+    mime_type = Column(String(128), nullable=True)
+    content_hash = Column(String(64), nullable=False, index=True)
+    document_type = Column(String(128), nullable=True)
+    processing_status = Column(String(64), nullable=False, default="completed")
+    ocr_status = Column(String(64), nullable=True, default="not_required")
+    parser_version = Column(String(32), nullable=True, default="v2.0")
+    embedding_version = Column(String(32), nullable=True, default="v2.0")
+    embedding_provider = Column(String(64), nullable=True)
+    embedding_model = Column(String(128), nullable=True)
+    embedding_dimension = Column(Integer, nullable=True)
+    status = Column(String(32), nullable=False, default="processed")
+    error_message = Column(Text, nullable=True)
+    doc_type = Column(String(32), nullable=True, default="pdf")
+    upload_timestamp = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
 class DocumentProfileModel(Base):
     __tablename__ = "document_profiles"
 

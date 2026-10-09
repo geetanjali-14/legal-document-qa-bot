@@ -120,7 +120,7 @@ async def get_conversation(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation with ID '{conversation_id}' was not found."
         )
-    if settings.DEMO_MODE and raw_conv.session_id and raw_conv.session_id != session_id:
+    if settings.DEMO_MODE and (raw_conv.session_id != session_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation with ID '{conversation_id}' was not found."
@@ -151,7 +151,7 @@ async def update_conversation(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation with ID '{conversation_id}' was not found."
         )
-    if settings.DEMO_MODE and raw_conv.session_id and raw_conv.session_id != session_id:
+    if settings.DEMO_MODE and (raw_conv.session_id != session_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation with ID '{conversation_id}' was not found."

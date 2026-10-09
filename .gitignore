@@ -30,3 +30,5 @@ htmlcov/
 .vscode/
 legal_qa_test_report.txt
 legal_qa_ui_test_plan.md
+.neon
+node_modules/

@@ -29,7 +29,9 @@ class MockEmbeddingProvider(BaseEmbeddingProvider):
 
     def _hash_vector(self, text: str) -> np.ndarray:
         vec = np.zeros(self.dimension, dtype=np.float32)
-        words = text.lower().split()
+        import re
+        cleaned = re.sub(r'[^\w\s]', ' ', text.lower())
+        words = [w for w in cleaned.split() if w]
         if not words:
             return vec
         for word in words:
