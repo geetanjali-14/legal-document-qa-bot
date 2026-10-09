@@ -790,8 +790,19 @@ function setChatLoading(isLoading) {
   sendBtn.disabled = isLoading;
   questionInput.disabled = isLoading;
   if (isLoading) {
-    sendBtn.innerHTML = "<span>...</span>";
+    sendBtn.classList.add("loading");
+    sendBtn.setAttribute("aria-label", "Preparing answer...");
+    sendBtn.innerHTML = `
+      <span class="btn-dots-loader" aria-hidden="true">
+        <span class="btn-dot"></span>
+        <span class="btn-dot"></span>
+        <span class="btn-dot"></span>
+      </span>
+      <span class="sr-only">Preparing answer...</span>
+    `;
   } else {
+    sendBtn.classList.remove("loading");
+    sendBtn.setAttribute("aria-label", "Send question");
     sendBtn.innerHTML = "<span>Ask</span>";
     questionInput.focus();
   }
