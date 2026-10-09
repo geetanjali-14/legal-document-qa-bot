@@ -19,6 +19,8 @@ from app.integrations.slack_formatter import (
     format_help_message
 )
 from app.integrations.slack_dedup import EventDeduplicator
+from app.integrations.contracts import PlatformIncomingMessage, PlatformAction
+from app.integrations.coordinator import IntegrationCoordinator
 
 
 class SlackAdapter:
@@ -32,7 +34,8 @@ class SlackAdapter:
         bot_token: Optional[str] = None,
         app_token: Optional[str] = None,
         api_client: Optional[LegalQAClient] = None,
-        mapping_repo: Optional[SlackMappingRepository] = None
+        mapping_repo: Optional[SlackMappingRepository] = None,
+        coordinator: Optional[IntegrationCoordinator] = None
     ):
         self.bot_token = bot_token or settings.SLACK_BOT_TOKEN
         self.app_token = app_token or settings.SLACK_APP_TOKEN
@@ -40,6 +43,12 @@ class SlackAdapter:
         self.api_client = api_client or LegalQAClient(base_url=settings.LEGAL_QA_API_BASE_URL)
         self.mapping_repo = mapping_repo or SlackMappingRepository()
         self.dedup = EventDeduplicator()
+
+        self.coordinator = coordinator or IntegrationCoordinator(
+            api_client=self.api_client,
+            mapping_repo=self.mapping_repo,
+            dedup=self.dedup
+        )
 
         self.app = App(token=self.bot_token)
         self._register_handlers()
@@ -93,195 +102,68 @@ class SlackAdapter:
             return
 
         cleaned_text = extract_user_query(raw_text)
-        if not cleaned_text:
-            say(
-                text="Hello! How can I assist you with your legal documents today? Type `help` for instructions.",
-                thread_ts=reply_ts
-            )
+        incoming_msg = PlatformIncomingMessage(
+            platform="slack",
+            tenant_id=team,
+            channel_id=channel,
+            thread_id=thread_ts,
+            user_id=user,
+            text=cleaned_text,
+            event_id=None  # Already deduplicated above by SlackAdapter
+        )
+
+        response = self.coordinator.process_message(incoming_msg)
+        if not response:
             return
 
-        # 2. Check for Help command
-        if is_help_command(cleaned_text):
-            say(text=format_help_message(), thread_ts=reply_ts)
-            return
+        # Format and deliver response to Slack
+        if response.action == PlatformAction.HELP:
+            if not cleaned_text:
+                say(text=response.text, thread_ts=reply_ts)
+            else:
+                say(text=format_help_message(), thread_ts=reply_ts)
 
-        # 3. Check for Reset / Clear context command
-        if is_clear_context_command(cleaned_text):
-            self.mapping_repo.clear_mapping(
-                channel_id=channel,
-                user_id=user,
-                team_id=team,
-                thread_ts=thread_ts
-            )
-            say(
-                text="Active document and conversation session cleared. You can select a document with `select <document_id>` or ask general legal questions.",
-                thread_ts=reply_ts
-            )
-            return
+        elif response.action == PlatformAction.CLEAR_CONTEXT:
+            say(text=response.text, thread_ts=reply_ts)
 
-        # 4. Check for List Documents command
-        if is_list_docs_command(cleaned_text):
-            self._handle_list_documents(channel, reply_ts, say)
-            return
-
-        # 5. Check for Select Document command
-        target_doc = parse_select_command(cleaned_text)
-        if target_doc:
-            self._handle_select_document(target_doc, channel, user, team, thread_ts, reply_ts, say)
-            return
-
-        # 6. Chat / Ask Question (Phase A & B)
-        self._handle_chat_query(cleaned_text, channel, user, team, thread_ts, reply_ts, say)
-
-    def _handle_list_documents(self, channel: str, reply_ts: str, say):
-        try:
-            docs = self.api_client.list_documents()
+        elif response.action == PlatformAction.LIST_DOCUMENTS:
+            docs = response.metadata.get("documents", [])
             if not docs:
                 say(
                     text="No documents have been indexed yet. You can upload a PDF right here in Slack!",
                     thread_ts=reply_ts
                 )
-                return
+            else:
+                msg_lines = ["*Available Legal Documents:*"]
+                for d in docs:
+                    doc_id = d.get("document_id")
+                    filename = d.get("original_filename") or d.get("filename")
+                    pages = d.get("page_count", 0)
+                    chunks = d.get("chunk_count", 0)
+                    msg_lines.append(f"• `{doc_id}`: *{filename}* ({pages} pages, {chunks} chunks)")
+                msg_lines.append("\nTo query one, type `select <document_id>`.")
+                say(text="\n".join(msg_lines), thread_ts=reply_ts)
 
-            msg_lines = ["*Available Legal Documents:*"]
-            for d in docs:
-                doc_id = d.get("document_id")
-                filename = d.get("original_filename") or d.get("filename")
-                pages = d.get("page_count", 0)
-                chunks = d.get("chunk_count", 0)
-                msg_lines.append(f"• `{doc_id}`: *{filename}* ({pages} pages, {chunks} chunks)")
-
-            msg_lines.append("\nTo query one, type `select <document_id>`.")
-            say(text="\n".join(msg_lines), thread_ts=reply_ts)
-        except LegalQAAPIError as e:
-            say(text=f"⚠️ {e.message}", thread_ts=reply_ts)
-
-    def _handle_select_document(
-        self,
-        doc_id: str,
-        channel: str,
-        user: str,
-        team: Optional[str],
-        thread_ts: Optional[str],
-        reply_ts: str,
-        say
-    ):
-        try:
-            # Verify document exists in backend
-            doc_detail = self.api_client.get_document(doc_id)
-            filename = doc_detail.get("original_filename") or doc_detail.get("filename", doc_id)
-
-            # Persist mapping for this user + thread/channel context
-            self.mapping_repo.save_mapping(
-                channel_id=channel,
-                user_id=user,
-                team_id=team,
-                thread_ts=thread_ts,
-                document_id=doc_id,
-                conversation_id=None,  # Reset conversation to start fresh with this doc
-                reset_conversation=True
-            )
-
+        elif response.action == PlatformAction.SELECT_DOCUMENT:
+            filename = response.metadata.get("filename", response.document_id)
             context_scope = "in this thread" if thread_ts else "in this conversation"
             say(
-                text=f"Selected document *{filename}* (`{doc_id}`). You can now ask questions about it {context_scope}!",
+                text=f"Selected document *{filename}* (`{response.document_id}`). You can now ask questions about it {context_scope}!",
                 thread_ts=reply_ts
             )
-        except LegalQAAPIError as e:
-            say(text=f"⚠️ {e.message}", thread_ts=reply_ts)
 
-    def _handle_chat_query(
-        self,
-        question: str,
-        channel: str,
-        user: str,
-        team: Optional[str],
-        thread_ts: Optional[str],
-        reply_ts: str,
-        say
-    ):
-        # Retrieve active context for this user and thread
-        mapping = self.mapping_repo.get_mapping(
-            channel_id=channel,
-            user_id=user,
-            team_id=team,
-            thread_ts=thread_ts
-        )
-
-        doc_id = mapping.document_id if mapping else None
-        conv_id = mapping.conversation_id if mapping else None
-
-        logger.info(
-            f"[SlackAdapter:Chat] channel={channel}, user={user}, team={team}, thread_ts={thread_ts} "
-            f"-> active doc_id={doc_id}, conv_id={conv_id}"
-        )
-
-        try:
-            try:
-                chat_res = self.api_client.chat(
-                    question=question,
-                    document_id=doc_id,
-                    conversation_id=conv_id
-                )
-            except LegalQAAPIError as e:
-                # If error is due to mismatched conversation (e.g. stale conv from general query or another doc),
-                # heal by resetting conversation_id and retrying once.
-                if conv_id and ("does not belong to document" in (e.message or "").lower() or e.status_code == 400):
-                    logger.warning(
-                        f"[SlackAdapter:Chat] Conversation mismatch detected ({conv_id} vs {doc_id}). "
-                        f"Resetting stale conversation and retrying."
-                    )
-                    conv_id = None
-                    self.mapping_repo.save_mapping(
-                        channel_id=channel,
-                        user_id=user,
-                        team_id=team,
-                        thread_ts=thread_ts,
-                        document_id=doc_id,
-                        conversation_id=None,
-                        reset_conversation=True
-                    )
-                    chat_res = self.api_client.chat(
-                        question=question,
-                        document_id=doc_id,
-                        conversation_id=None
-                    )
-                else:
-                    raise
-
-            # Update conversation ID mapping
-            new_conv_id = chat_res.get("conversation_id")
-            if new_conv_id is not None and not isinstance(new_conv_id, str):
-                new_conv_id = str(new_conv_id) if not hasattr(new_conv_id, "_mock_name") else None
-
-            if new_conv_id and (not conv_id or new_conv_id != conv_id):
-                self.mapping_repo.save_mapping(
-                    channel_id=channel,
-                    user_id=user,
-                    team_id=team,
-                    thread_ts=thread_ts,
-                    document_id=doc_id,
-                    conversation_id=new_conv_id
-                )
-
-            answer = chat_res.get("answer", "")
-            sources = chat_res.get("sources", [])
-            returned_doc = chat_res.get("document_id") or doc_id
-
+        elif response.action == PlatformAction.ANSWER:
             formatted = format_slack_answer(
-                answer=answer,
-                sources=sources,
-                document_id=returned_doc
+                answer=response.text,
+                sources=response.sources,
+                document_id=response.document_id
             )
-
-            # If no document was selected and answer was general legal info, give a tip
-            if not returned_doc:
+            if not response.document_id:
                 formatted += "\n\n_Tip: To analyze a specific document, type `list docs` and `select <document_id>`, or upload a PDF._"
-
             say(text=formatted, thread_ts=reply_ts)
 
-        except LegalQAAPIError as e:
-            say(text=f"⚠️ {e.message}", thread_ts=reply_ts)
+        elif response.action == PlatformAction.ERROR:
+            say(text=f"⚠️ {response.text}", thread_ts=reply_ts)
 
     def _handle_file_upload(
         self,
@@ -319,30 +201,26 @@ class SlackAdapter:
                     resp.raise_for_status()
                     file_bytes = resp.content
 
-                # Upload to existing POST /api/v1/documents
-                upload_res = self.api_client.upload_document(
+                # Delegate upload and context binding to coordinator
+                upload_msg = PlatformIncomingMessage(
+                    platform="slack",
+                    tenant_id=team,
+                    channel_id=channel,
+                    thread_id=thread_ts,
+                    user_id=user,
                     file_bytes=file_bytes,
                     filename=file_name
                 )
+                upload_resp = self.coordinator.process_message(upload_msg)
 
-                doc_id = upload_res.get("document_id")
-                pages = upload_res.get("page_count", 0)
-                chunks = upload_res.get("chunk_count", 0)
+                if not upload_resp or upload_resp.action == PlatformAction.ERROR:
+                    err_msg = upload_resp.text if upload_resp else "Failed to process file from Slack."
+                    say(text=f"⚠️ {err_msg}", thread_ts=reply_ts)
+                    continue
 
-                logger.info(
-                    f"[SlackAdapter:Upload] channel={channel}, user={user}, team={team}, thread_ts={thread_ts} "
-                    f"-> indexed doc_id={doc_id}"
-                )
-                # Bind uploaded document to this user's current thread/context
-                self.mapping_repo.save_mapping(
-                    channel_id=channel,
-                    user_id=user,
-                    team_id=team,
-                    thread_ts=thread_ts,
-                    document_id=doc_id,
-                    conversation_id=None,
-                    reset_conversation=True
-                )
+                doc_id = upload_resp.document_id
+                pages = upload_resp.metadata.get("page_count", 0)
+                chunks = upload_resp.metadata.get("chunk_count", 0)
 
                 context_scope = "in this thread" if thread_ts else "in this conversation"
                 say(
@@ -356,8 +234,6 @@ class SlackAdapter:
                     thread_ts=reply_ts
                 )
 
-            except LegalQAAPIError as e:
-                say(text=f"⚠️ Upload failed: {e.message}", thread_ts=reply_ts)
             except Exception as e:
                 logger.error(f"[SlackAdapter] Error downloading/uploading Slack file: {e}")
                 say(text="⚠️ Failed to download or process file from Slack.", thread_ts=reply_ts)

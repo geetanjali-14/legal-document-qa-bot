@@ -58,10 +58,13 @@ class SlackMappingRepository:
         if thread_ts:
             candidates.append(self.build_context_key(team_id, channel_id, None, user_id))
 
-        if team_id:
-            candidates.append(self.build_context_key(None, channel_id, thread_ts, user_id))
+        # When team_id is known, evaluate within team first (exact thread, then root thread).
+        # Fallback to "default_team" is allowed ONLY as a last resort for events where the team was unspecified during upload (e.g. DM upload),
+        # but lookups must NEVER fall back to a DIFFERENT explicit team/workspace ID.
+        if team_id and team_id != "default_team":
+            candidates.append(self.build_context_key("default_team", channel_id, thread_ts, user_id))
             if thread_ts:
-                candidates.append(self.build_context_key(None, channel_id, None, user_id))
+                candidates.append(self.build_context_key("default_team", channel_id, None, user_id))
         else:
             candidates.append(self.build_context_key("default_team", channel_id, thread_ts, user_id))
             if thread_ts:
