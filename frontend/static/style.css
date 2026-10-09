@@ -772,6 +772,51 @@ button, input, textarea {
   margin: 0;
 }
 
+.answer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--ink-900);
+}
+
+.answer-para {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.answer-list {
+  margin: 2px 0 6px 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.answer-list li {
+  line-height: 1.55;
+  color: var(--ink-800);
+}
+
+.answer-heading {
+  margin: 8px 0 2px 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--ink-900);
+}
+
+.answer-body strong {
+  font-weight: 600;
+  color: var(--ink-900);
+}
+
+.answer-body code {
+  background: var(--bg-subtle);
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 0.86rem;
+  font-family: monospace;
+}
+
 .status-row {
   margin-bottom: 8px;
 }
@@ -1056,13 +1101,24 @@ button, input, textarea {
   gap: 10px;
 }
 
-.docs-view-filter {
+.docs-view-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.docs-view-filter {
+  flex: 1;
+  min-width: 260px;
+  max-width: 480px;
+  margin-bottom: 0;
 }
 
 .docs-view-filter input {
   width: 100%;
-  max-width: 480px;
   padding: 10px 14px;
   font-size: 0.9rem;
   background: var(--bg-surface);
@@ -1073,6 +1129,47 @@ button, input, textarea {
 
 .docs-view-filter input:focus {
   border-color: var(--blue-600);
+}
+
+.docs-batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.select-all-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.86rem;
+  font-weight: 500;
+  color: var(--ink-700);
+  cursor: pointer;
+  user-select: none;
+}
+
+.select-all-label input[type="checkbox"],
+.doc-card-select-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--blue-600);
+}
+
+.selected-count-badge {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-600);
+  background: var(--bg-subtle);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+#deleteSelectedDocsBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .documents-grid {
@@ -1091,6 +1188,7 @@ button, input, textarea {
   flex-direction: column;
   gap: 16px;
   transition: all 0.15s ease;
+  position: relative;
 }
 
 .doc-card:hover {
@@ -1103,10 +1201,23 @@ button, input, textarea {
   background: #fbfdff;
 }
 
+.doc-card.selected {
+  border-color: var(--blue-500);
+  background: #f8faff;
+}
+
 .doc-card-header {
   display: flex;
   align-items: flex-start;
   gap: 12px;
+}
+
+.doc-card-select-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 4px;
+  cursor: pointer;
 }
 
 .file-glyph {
@@ -1142,7 +1253,7 @@ button, input, textarea {
   padding-top: 12px;
 }
 
-.open-chat-action {
+.view-doc-action {
   flex: 1;
 }
 

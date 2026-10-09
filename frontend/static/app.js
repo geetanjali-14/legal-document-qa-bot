@@ -75,6 +75,15 @@ const deleteDocCancelBtn = document.getElementById("deleteDocCancelBtn");
 const deleteDocConfirmBtn = document.getElementById("deleteDocConfirmBtn");
 let pendingDocDeleteId = null;
 
+const batchDocDeleteDialog = document.getElementById("batchDocDeleteDialog");
+const batchDeleteDocCount = document.getElementById("batchDeleteDocCount");
+const batchDeleteDocCancelBtn = document.getElementById("batchDeleteDocCancelBtn");
+const batchDeleteDocConfirmBtn = document.getElementById("batchDeleteDocConfirmBtn");
+const selectAllDocsCheckbox = document.getElementById("selectAllDocsCheckbox");
+const selectedDocsCount = document.getElementById("selectedDocsCount");
+const deleteSelectedDocsBtn = document.getElementById("deleteSelectedDocsBtn");
+let selectedDocIds = new Set();
+
 const convDeleteDialog = document.getElementById("convDeleteDialog");
 const deleteConvTitle = document.getElementById("deleteConvTitle");
 const deleteConvCancelBtn = document.getElementById("deleteConvCancelBtn");
@@ -274,6 +283,29 @@ function setupEventListeners() {
     });
   }
   if (deleteDocConfirmBtn) deleteDocConfirmBtn.addEventListener("click", confirmDeleteDocument);
+
+  // Batch Multi-Select Document Deletion
+  if (selectAllDocsCheckbox) {
+    selectAllDocsCheckbox.addEventListener("change", (e) => {
+      toggleSelectAllDocuments(e.target.checked);
+    });
+  }
+
+  if (deleteSelectedDocsBtn) {
+    deleteSelectedDocsBtn.addEventListener("click", () => {
+      openBatchDeleteDialog();
+    });
+  }
+
+  if (batchDeleteDocCancelBtn && batchDocDeleteDialog) {
+    batchDeleteDocCancelBtn.addEventListener("click", () => {
+      batchDocDeleteDialog.close();
+    });
+  }
+
+  if (batchDeleteDocConfirmBtn) {
+    batchDeleteDocConfirmBtn.addEventListener("click", confirmBatchDeleteDocuments);
+  }
 
   if (deleteConvCancelBtn && convDeleteDialog) {
     deleteConvCancelBtn.addEventListener("click", () => {
@@ -714,9 +746,10 @@ function appendAssistantMessage(text, sources = [], confidence = "supported", di
   statusRow.appendChild(answerStatus);
   content.appendChild(statusRow);
 
-  const answer = document.createElement("p");
-  answer.textContent = text;
-  content.appendChild(answer);
+  const answerEl = document.createElement("div");
+  answerEl.className = "answer-body";
+  answerEl.innerHTML = formatAssistantMessageHTML(text);
+  content.appendChild(answerEl);
 
   if (confidence === "insufficient_context") {
     const guidance = document.createElement("div");
@@ -1074,6 +1107,8 @@ function renderDocumentsGrid(docs, filterQuery = "") {
     ? docs.filter(d => (d.original_filename || d.filename || "").toLowerCase().includes(query))
     : docs;
 
+  updateBatchSelectionUI(filtered);
+
   if (filtered.length === 0) {
     documentsGrid.innerHTML = `
       <div class="empty-docs-placeholder">
@@ -1089,11 +1124,16 @@ function renderDocumentsGrid(docs, filterQuery = "") {
   documentsGrid.innerHTML = "";
   filtered.forEach(doc => {
     const card = document.createElement("div");
-    card.className = `doc-card ${doc.document_id === activeDocumentId ? "active" : ""}`;
+    const isSelected = selectedDocIds.has(doc.document_id);
+    card.className = `doc-card ${doc.document_id === activeDocumentId ? "active" : ""} ${isSelected ? "selected" : ""}`;
+    card.dataset.docId = doc.document_id;
     const name = doc.original_filename || doc.filename;
 
     card.innerHTML = `
       <div class="doc-card-header">
+        <label class="doc-card-select-label" title="Select ${escapeHtml(name)}">
+          <input type="checkbox" class="doc-card-checkbox" data-doc-id="${doc.document_id}" ${isSelected ? "checked" : ""}>
+        </label>
         <span class="file-glyph">📄</span>
         <div class="doc-card-info">
           <h3 class="doc-name" title="${escapeHtml(name)}">${escapeHtml(name)}</h3>
@@ -1101,15 +1141,15 @@ function renderDocumentsGrid(docs, filterQuery = "") {
         </div>
       </div>
       <div class="doc-card-actions">
-        <button type="button" class="primary-btn open-chat-action">Open Chat</button>
-        <button type="button" class="secondary-btn view-doc-action">View</button>
+        <button type="button" class="primary-btn view-doc-action">View</button>
         <button type="button" class="del-btn-card" title="Delete document" aria-label="Delete ${escapeHtml(name)}">×</button>
       </div>
     `;
 
-    card.querySelector(".open-chat-action").addEventListener("click", () => {
-      executeSetDocumentContext(doc.document_id, name, doc.page_count, doc.chunk_count, true);
-      showChatWorkspace();
+    const checkbox = card.querySelector(".doc-card-checkbox");
+    checkbox.addEventListener("change", (e) => {
+      e.stopPropagation();
+      toggleDocSelection(doc.document_id, e.target.checked);
     });
 
     card.querySelector(".view-doc-action").addEventListener("click", () => {
@@ -1122,6 +1162,126 @@ function renderDocumentsGrid(docs, filterQuery = "") {
 
     documentsGrid.appendChild(card);
   });
+}
+
+function toggleDocSelection(docId, isSelected) {
+  if (isSelected) {
+    selectedDocIds.add(docId);
+  } else {
+    selectedDocIds.delete(docId);
+  }
+
+  // Update card selected class
+  const card = documentsGrid.querySelector(`.doc-card[data-doc-id="${docId}"]`);
+  if (card) {
+    card.classList.toggle("selected", isSelected);
+  }
+
+  const query = (docsViewSearchInput?.value || "").trim().toLowerCase();
+  const filtered = query
+    ? allDocuments.filter(d => (d.original_filename || d.filename || "").toLowerCase().includes(query))
+    : allDocuments;
+  updateBatchSelectionUI(filtered);
+}
+
+function toggleSelectAllDocuments(selectAll) {
+  const query = (docsViewSearchInput?.value || "").trim().toLowerCase();
+  const visibleDocs = query
+    ? allDocuments.filter(d => (d.original_filename || d.filename || "").toLowerCase().includes(query))
+    : allDocuments;
+
+  if (selectAll) {
+    visibleDocs.forEach(d => selectedDocIds.add(d.document_id));
+  } else {
+    visibleDocs.forEach(d => selectedDocIds.delete(d.document_id));
+  }
+
+  // Update UI checkboxes & cards
+  const checkboxes = documentsGrid.querySelectorAll(".doc-card-checkbox");
+  checkboxes.forEach(cb => {
+    const id = cb.dataset.docId;
+    cb.checked = selectedDocIds.has(id);
+    const card = cb.closest(".doc-card");
+    if (card) {
+      card.classList.toggle("selected", selectedDocIds.has(id));
+    }
+  });
+
+  updateBatchSelectionUI(visibleDocs);
+}
+
+function updateBatchSelectionUI(visibleDocs = null) {
+  const docs = visibleDocs || allDocuments;
+  const count = selectedDocIds.size;
+
+  if (selectedDocsCount) {
+    selectedDocsCount.textContent = `${count} selected`;
+  }
+
+  if (deleteSelectedDocsBtn) {
+    deleteSelectedDocsBtn.disabled = count === 0;
+  }
+
+  if (selectAllDocsCheckbox) {
+    if (docs.length === 0) {
+      selectAllDocsCheckbox.checked = false;
+      selectAllDocsCheckbox.indeterminate = false;
+    } else {
+      const allVisibleSelected = docs.length > 0 && docs.every(d => selectedDocIds.has(d.document_id));
+      const someVisibleSelected = docs.some(d => selectedDocIds.has(d.document_id));
+      selectAllDocsCheckbox.checked = allVisibleSelected;
+      selectAllDocsCheckbox.indeterminate = !allVisibleSelected && someVisibleSelected;
+    }
+  }
+}
+
+function openBatchDeleteDialog() {
+  if (selectedDocIds.size === 0) return;
+  if (batchDeleteDocCount) {
+    batchDeleteDocCount.textContent = `${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}`;
+  }
+  if (batchDocDeleteDialog) {
+    batchDocDeleteDialog.showModal();
+  }
+}
+
+async function confirmBatchDeleteDocuments() {
+  if (batchDocDeleteDialog) batchDocDeleteDialog.close();
+  const idsToDelete = Array.from(selectedDocIds);
+  if (idsToDelete.length === 0) return;
+
+  showStatus(`Deleting ${idsToDelete.length} document(s)...`, "loading");
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const docId of idsToDelete) {
+    try {
+      const res = await fetch(`/api/documents/${docId}`, { method: "DELETE" });
+      if (res.ok) {
+        successCount++;
+        selectedDocIds.delete(docId);
+        if (activeDocumentId === docId) {
+          initNewChatState(null);
+        }
+      } else {
+        failCount++;
+      }
+    } catch (err) {
+      failCount++;
+    }
+  }
+
+  await fetchDocuments();
+  updateBatchSelectionUI();
+
+  if (failCount === 0) {
+    showStatus(`Successfully deleted ${successCount} document${successCount === 1 ? "" : "s"}.`, "success", true);
+  } else if (successCount > 0) {
+    showStatus(`Deleted ${successCount} document(s), but ${failCount} failed.`, "error", true);
+  } else {
+    showStatus("Failed to delete selected documents.", "error", true);
+  }
 }
 
 function openDocumentViewer(documentId, name) {
@@ -1148,11 +1308,13 @@ async function confirmDeleteDocument() {
   try {
     const res = await fetch(`/api/documents/${id}`, { method: "DELETE" });
     if (res.ok) {
+      selectedDocIds.delete(id);
       if (activeDocumentId === id) {
         initNewChatState(null);
       }
       showStatus("Document deleted successfully", "success", true);
       await fetchDocuments();
+      updateBatchSelectionUI();
     }
   } catch (err) {
     showStatus("Failed to delete document: " + err.message, "error", true);
@@ -1237,3 +1399,81 @@ function escapeHtml(str) {
     }
   });
 }
+
+function formatAssistantMessageHTML(rawText) {
+  if (!rawText) return "";
+
+  // Split into raw lines while preserving structure
+  const lines = rawText.split(/\r?\n/);
+  const htmlParts = [];
+  let currentList = null; // { type: 'ul' | 'ol', items: [] }
+
+  function flushList() {
+    if (!currentList) return;
+    const tag = currentList.type;
+    const listHtml = `<${tag} class="answer-list">` +
+      currentList.items.map(it => `<li>${formatInlineMarkdown(it)}</li>`).join("") +
+      `</${tag}>`;
+    htmlParts.push(listHtml);
+    currentList = null;
+  }
+
+  function formatInlineMarkdown(text) {
+    let escaped = escapeHtml(text);
+    // Bold: **text**
+    escaped = escaped.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    // Inline code: `text`
+    escaped = escaped.replace(/`([^`]+)`/g, "<code>$1</code>");
+    return escaped;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+
+    if (!trimmed) {
+      flushList();
+      continue;
+    }
+
+    // Check for bullet list item: * or -
+    const bulletMatch = trimmed.match(/^[\*\-]\s+(.+)$/);
+    if (bulletMatch) {
+      if (!currentList || currentList.type !== "ul") {
+        flushList();
+        currentList = { type: "ul", items: [] };
+      }
+      currentList.items.push(bulletMatch[1]);
+      continue;
+    }
+
+    // Check for ordered list item: 1. or 2.
+    const orderedMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
+    if (orderedMatch) {
+      if (!currentList || currentList.type !== "ol") {
+        flushList();
+        currentList = { type: "ol", items: [] };
+      }
+      currentList.items.push(orderedMatch[2]);
+      continue;
+    }
+
+    // Not a list item
+    flushList();
+
+    // Check for Markdown headers (### or ##)
+    const headingMatch = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    if (headingMatch) {
+      const level = Math.min(Math.max(headingMatch[1].length + 2, 3), 4);
+      htmlParts.push(`<h${level} class="answer-heading">${formatInlineMarkdown(headingMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    // Standard paragraph line
+    htmlParts.push(`<p class="answer-para">${formatInlineMarkdown(trimmed)}</p>`);
+  }
+
+  flushList();
+  return htmlParts.join("");
+}
+

@@ -7,6 +7,7 @@ from app.providers.rag_xai import XAIRAGProvider
 from app.providers.llm_adapters import (
     GeminiLLMProvider,
     OpenAILLMProvider,
+    GroqLLMProvider,
     XAILLMProvider,
     MockLLMProviderAdapter
 )
@@ -77,6 +78,12 @@ class ProviderFactory:
             )
         elif provider == "openai":
             return OpenAILLMProvider(
+                api_key=kwargs.get("api_key") or settings.LLM_API_KEY,
+                model=kwargs.get("model") or settings.LLM_MODEL,
+                base_url=kwargs.get("base_url") or settings.LLM_BASE_URL
+            )
+        elif provider == "groq":
+            return GroqLLMProvider(
                 api_key=kwargs.get("api_key") or settings.LLM_API_KEY,
                 model=kwargs.get("model") or settings.LLM_MODEL,
                 base_url=kwargs.get("base_url") or settings.LLM_BASE_URL

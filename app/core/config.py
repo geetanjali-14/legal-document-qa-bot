@@ -57,8 +57,9 @@ class Settings(BaseSettings):
     XAI_COLLECTION_ID: str = ""
 
     # LLM Provider
-    LLM_PROVIDER: Literal["mock", "openai", "anthropic", "ollama", "gemini", "grok", "xai", "mistral", "custom_http"] = "mock"
+    LLM_PROVIDER: Literal["mock", "openai", "anthropic", "ollama", "gemini", "grok", "xai", "mistral", "groq", "custom_http"] = "mock"
     LLM_API_KEY: str = ""
+    GROQ_API_KEY: str = ""
     LLM_MODEL: str = "gpt-4o-mini"
     LLM_BASE_URL: str = ""
     LLM_TEMPERATURE: float = 0.0

@@ -175,8 +175,20 @@
           </div>
         </div>
 
-        <div class="docs-view-filter">
-          <input type="text" id="docsViewSearchInput" placeholder="Search your documents..." aria-label="Search uploaded documents" />
+        <div class="docs-view-toolbar">
+          <div class="docs-view-filter">
+            <input type="text" id="docsViewSearchInput" placeholder="Search your documents..." aria-label="Search uploaded documents" />
+          </div>
+          <div class="docs-batch-actions">
+            <label class="select-all-label" for="selectAllDocsCheckbox">
+              <input type="checkbox" id="selectAllDocsCheckbox" aria-label="Select all documents" />
+              <span>Select All</span>
+            </label>
+            <span class="selected-count-badge" id="selectedDocsCount">0 selected</span>
+            <button type="button" id="deleteSelectedDocsBtn" class="danger-btn" disabled>
+              Delete Selected
+            </button>
+          </div>
         </div>
 
         <div class="documents-grid" id="documentsGrid">
@@ -263,6 +275,20 @@
       <div class="dialog-footer">
         <button type="button" class="secondary-btn" id="deleteDocCancelBtn">Cancel</button>
         <button type="button" class="danger-btn" id="deleteDocConfirmBtn">Delete</button>
+      </div>
+    </dialog>
+
+    <!-- Batch Document Delete Confirmation Modal -->
+    <dialog class="app-dialog confirm-dialog" id="batchDocDeleteDialog" aria-labelledby="batchDocDeleteTitle">
+      <div class="dialog-header">
+        <h2 id="batchDocDeleteTitle">Delete Selected Documents</h2>
+      </div>
+      <div class="dialog-body">
+        <p>Are you sure you want to delete <strong id="batchDeleteDocCount">0 documents</strong>? All associated chat references will be removed. This action cannot be undone.</p>
+      </div>
+      <div class="dialog-footer">
+        <button type="button" class="secondary-btn" id="batchDeleteDocCancelBtn">Cancel</button>
+        <button type="button" class="danger-btn" id="batchDeleteDocConfirmBtn">Delete Selected</button>
       </div>
     </dialog>
 

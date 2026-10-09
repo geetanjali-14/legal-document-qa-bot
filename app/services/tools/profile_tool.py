@@ -63,13 +63,22 @@ class DocumentProfileTool:
         Extracts document type, parties, effective date, and key sections deterministically
         from early and structural chunks.
         """
-        chunks = self.document_service.get_document_chunks(doc.document_id)
+        chunks = []
+        if hasattr(self.document_service, "get_document_chunks"):
+            ret = self.document_service.get_document_chunks(doc.document_id)
+            if isinstance(ret, list):
+                chunks = ret
+        if not chunks and hasattr(self.document_service, "vector_store"):
+            chunks_map = getattr(self.document_service.vector_store, "chunks_by_doc", {})
+            if isinstance(chunks_map, dict):
+                chunks = chunks_map.get(doc.document_id, [])
+
         if not chunks:
             return None
 
         # Extract preamble text (typically chunks from page 1)
-        p1_chunks = [c for c in chunks if c.page_number == 1]
-        preamble_text = "\n".join(c.text for c in p1_chunks) if p1_chunks else chunks[0].text
+        p1_chunks = [c for c in chunks if getattr(c, "page_number", None) == 1]
+        preamble_text = "\n".join(c.text for c in p1_chunks) if p1_chunks else (chunks[0].text if hasattr(chunks[0], "text") else "")
 
         # Detect Document Type
         doc_type = "Legal Agreement"
@@ -100,25 +109,31 @@ class DocumentProfileTool:
         if date_match:
             effective_date = date_match.group(1).strip()
 
-        # Collect Distinct Major Sections
+        # Clean distinct major sections, removing noisy OCR artifacts and generic headings
         sections_set: Set[str] = set()
         source_pages: Set[int] = set()
         for c in chunks:
             source_pages.add(c.page_number)
-            if c.section and c.section != "General":
-                sections_set.add(c.section.strip())
+            sec = (c.section or "").strip()
+            if sec and sec.lower() not in {"general", "general provisions", "contents", "table of contents", "index"}:
+                # Clean up trailing colons or noise
+                sec_clean = re.sub(r'[:;\.]+$', '', sec).strip()
+                if len(sec_clean) > 2 and not sec_clean.lower().startswith("contents"):
+                    sections_set.add(sec_clean)
 
         major_sections = sorted(list(sections_set))
         if not major_sections:
             major_sections = ["General Provisions"]
 
-        # Synthesize Executive Summary grounded in verified metadata
-        parties_str = " and ".join(parties) if parties else "the designated parties"
-        date_str = f" entered into on {effective_date}" if effective_date else ""
+        # Synthesize concise, natural overview grounded in verified document data
+        parties_str = " and ".join(parties) if parties else ""
+        parties_clause = f" between {parties_str}" if parties_str else ""
+        date_str = f", effective {effective_date}" if effective_date else ""
+        page_str = f"{doc.page_count} page{'s' if doc.page_count != 1 else ''}"
+        
         exec_summary = (
-            f"This document is a {doc_type}{date_str} between {parties_str}. "
-            f"It encompasses {doc.page_count} pages and governs operational commitments including "
-            f"{', '.join(major_sections[:4])}."
+            f"This document is an {doc_type}{parties_clause}{date_str} spanning {page_str}. "
+            f"It outlines key operational policies and provisions across the agreement."
         )
 
         from datetime import datetime, timezone
@@ -137,24 +152,36 @@ class DocumentProfileTool:
 
     def format_overview_answer(self, profile: DocumentProfileResult, aspect: Optional[str] = None) -> str:
         """
-        Formats structured, grounded answers for document overview queries.
+        Formats structured, grounded answers for document overview queries in a natural, clean, ChatGPT-like style.
         """
         if aspect == "parties":
             if profile.parties:
-                return f"The identified parties to this {profile.document_type} are:\n" + "\n".join(f"- {p}" for p in profile.parties)
+                party_items = "\n".join(f"* {p}" for p in profile.parties)
+                return f"The identified parties to this {profile.document_type} are:\n\n{party_items}"
             return f"The document identifies general parties under a {profile.document_type}, but distinct company names were not explicitly tagged."
         elif aspect == "document_type":
-            return f"This document is a {profile.document_type}."
+            return f"This document is a **{profile.document_type}**."
         elif aspect == "topics":
-            return f"The major sections and topics covered in this document are:\n" + "\n".join(f"- {t}" for t in profile.major_topics)
+            topics_items = "\n".join(f"* {t}" for t in profile.major_topics[:8])
+            return f"The major sections and topics covered in this document are:\n\n{topics_items}"
         else:
-            parties_line = f"Parties: {', '.join(profile.parties)}\n" if profile.parties else ""
-            date_line = f"Effective Date: {profile.effective_date}\n" if profile.effective_date else ""
-            topics_line = f"Key Sections: {', '.join(profile.major_topics[:6])}\n" if profile.major_topics else ""
-            return (
-                f"**Document Overview: {profile.document_type}**\n\n"
-                f"{profile.executive_summary}\n\n"
-                f"{parties_line}"
-                f"{date_line}"
-                f"{topics_line}"
-            ).strip()
+            lines = [profile.executive_summary]
+            bullets = []
+            if profile.parties:
+                bullets.append(f"* **Parties:** {', '.join(profile.parties)}")
+            if profile.effective_date:
+                bullets.append(f"* **Effective Date:** {profile.effective_date}")
+            if profile.major_topics and profile.major_topics != ["General Provisions"]:
+                # Filter out topics that duplicate document title
+                filtered_topics = [
+                    t for t in profile.major_topics
+                    if t.lower() != profile.document_type.lower() and t.lower() not in profile.document_type.lower()
+                ]
+                display_topics = filtered_topics if filtered_topics else profile.major_topics
+                if display_topics:
+                    bullets.append(f"* **Key Sections:** {', '.join(display_topics[:6])}")
+
+            if bullets:
+                lines.append("\n" + "\n".join(bullets))
+
+            return "\n".join(lines).strip()

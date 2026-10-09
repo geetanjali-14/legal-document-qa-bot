@@ -303,7 +303,8 @@ def test_delete_all_conversations(temp_db):
     assert len(service.list_conversations()) == 0
 
 
-def test_delete_all_conversations_api(temp_db):
+def test_delete_all_conversations_api(monkeypatch, temp_db):
+    monkeypatch.setitem(app_state, "conversation_service", temp_db["service"])
     service: ConversationService = temp_db["service"]
     c1 = service.create_conversation(document_id="doc_1")
     service.add_message(c1.conversation_id, role="user", content="msg 1")
@@ -313,4 +314,52 @@ def test_delete_all_conversations_api(temp_db):
         assert res.status_code == 200
         assert res.json()["success"] is True
         assert res.json()["data"]["deleted_count"] >= 1
+
+
+# =====================================================================
+# 5. Automatic Conversation Title Generation Tests
+# =====================================================================
+
+def test_auto_conversation_title_generation(temp_db):
+    service: ConversationService = temp_db["service"]
+
+    # 1. Notice period question
+    c1 = service.create_conversation(title="New Legal Consultation")
+    service.add_message(
+        conversation_id=c1.conversation_id,
+        role="user",
+        content="What is the notice period for early termination?"
+    )
+    detail1 = service.get_conversation(c1.conversation_id)
+    assert detail1.title == "Early Termination Notice Period"
+
+    # 2. Calculation question
+    c2 = service.create_conversation(title="Consultation for doc_xyz")
+    service.add_message(
+        conversation_id=c2.conversation_id,
+        role="user",
+        content="How is the first annual increment calculated?"
+    )
+    detail2 = service.get_conversation(c2.conversation_id)
+    assert detail2.title == "Annual Increment Calculation"
+
+    # 3. Subsequent message does not overwrite existing title (title stability)
+    service.add_message(
+        conversation_id=c2.conversation_id,
+        role="user",
+        content="Can you also explain the severance package?"
+    )
+    detail2_after = service.get_conversation(c2.conversation_id)
+    assert detail2_after.title == "Annual Increment Calculation"
+
+    # 4. Custom non-generic title is preserved
+    c3 = service.create_conversation(title="Custom Project Alpha Agreement")
+    service.add_message(
+        conversation_id=c3.conversation_id,
+        role="user",
+        content="What is the notice period for early termination?"
+    )
+    detail3 = service.get_conversation(c3.conversation_id)
+    assert detail3.title == "Custom Project Alpha Agreement"
+
 

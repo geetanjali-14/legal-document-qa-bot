@@ -11,6 +11,97 @@ from app.persistence.repository import ConversationRepository
 from app.core.logging import logger
 
 
+import re
+
+
+def generate_conversation_title(question: str) -> str:
+    """
+    Generates a concise, meaningful title from the user's first question/message,
+    similar to ChatGPT naming conventions.
+    """
+    if not question:
+        return "Legal Consultation"
+
+    text = question.strip()
+    # Strip quotes, markdown, trailing question marks and punctuation
+    text = re.sub(r"^[\"\'`]+|[\"\'`\?\.\!\;:]+$", "", text).strip()
+    # Normalize whitespace
+    text = re.sub(r"\s+", " ", text)
+
+    # Strip leading polite / filler prompts:
+    prefix_patterns = [
+        r"^(?:please\s+)?(?:can\s+you\s+|could\s+you\s+|would\s+you\s+)?(?:please\s+)?(?:kindly\s+)?(?:tell\s+me\s+|explain\s+|describe\s+|summarize\s+|detail\s+|clarify\s+)(?:to\s+me\s+)?(?:about\s+)?",
+        r"^(?:i\s+want\s+to\s+know\s+|i\s+would\s+like\s+to\s+know\s+|let\s+me\s+know\s+)(?:about\s+)?",
+        r"^(?:tell\s+me\s+about\s+|what\s+can\s+you\s+tell\s+me\s+about\s+)"
+    ]
+    for p in prefix_patterns:
+        text = re.sub(p, "", text, flags=re.IGNORECASE).strip()
+
+    # Strip conversational lead-ins like "what the ... clause covers" -> "... clause"
+    if re.match(r"^what\s+(?:the\s+)?(?:[a-z0-9_-]+\s+){1,4}(?:clause|section|term|provision)", text, re.IGNORECASE):
+        text = re.sub(r"^what\s+(?:the\s+)?", "", text, flags=re.IGNORECASE)
+
+    # Pattern: "how is/are [the] [first/second] X calculated/computed/determined" -> "X Calculation"
+    m_calc = re.match(
+        r"^how\s+(?:is|are)\s+(?:the\s+)?(?:first\s+|second\s+|third\s+)?(.*?)\s+(?:is\s+)?(?:calculated|computed|determined)$",
+        text,
+        flags=re.IGNORECASE
+    )
+    if m_calc:
+        core = m_calc.group(1).strip()
+        core = re.sub(r"^(?:the|a|an)\s+", "", core, flags=re.IGNORECASE)
+        return f"{core} Calculation".title()
+
+    # Pattern: "what is/are the X for/under Y" -> "Y X" (e.g. "notice period for early termination" -> "Early Termination Notice Period")
+    m_inversion = re.match(r"^(?:what\s+(?:is|are)\s+(?:the\s+)?)(.*?)\s+(?:for|under)\s+(.*?)$", text, flags=re.IGNORECASE)
+    if m_inversion:
+        part1 = m_inversion.group(1).strip()
+        part2 = m_inversion.group(2).strip()
+        part1 = re.sub(r"^(?:the|a|an)\s+", "", part1, flags=re.IGNORECASE)
+        part2 = re.sub(r"^(?:the|a|an)\s+", "", part2, flags=re.IGNORECASE)
+        if len(part2.split()) <= 4 and not re.search(r"\b(when|if|that|which|is|are|was|were)\b", part2, flags=re.IGNORECASE):
+            return f"{part2} {part1}".title()
+
+    # Pattern: "what is/are [the] X" / "how does [the] X work" / "is there [any] X" / "how much is [the] X"
+    lead_in = (
+        r"^(?:what\s+(?:is|are|were|was)\s+(?:the\s+|a\s+|an\s+)?|"
+        r"what\s+does\s+(?:the\s+)?|"
+        r"how\s+(?:does|do|can|is)\s+(?:the\s+)?|"
+        r"how\s+much\s+(?:is|are)\s+(?:the\s+)?|"
+        r"is\s+there\s+(?:any\s+)?|"
+        r"does\s+the\s+contract\s+have\s+(?:any\s+)?|"
+        r"who\s+is\s+responsible\s+for\s+(?:the\s+)?)"
+    )
+    text = re.sub(lead_in, "", text, flags=re.IGNORECASE).strip()
+
+    # Remove trailing verb phrases like "work", "mean", "apply", "cover", "specified", "stated"
+    text = re.sub(r"\s+(?:work|mean|apply|operate|say|state|cover|covers|look\s+like)$", "", text, flags=re.IGNORECASE).strip()
+
+    # Remove common leading articles
+    text = re.sub(r"^(?:the|a|an)\s+", "", text, flags=re.IGNORECASE).strip()
+
+    # Split into words and limit length
+    words = text.split()
+    if len(words) > 6:
+        words = words[:6]
+
+    # Strip trailing conjunctions/prepositions at boundary
+    while words and words[-1].lower() in ("of", "for", "in", "to", "and", "or", "with", "the", "a", "an", "under"):
+        words.pop()
+
+    text = " ".join(words).strip()
+    if not text:
+        return "Legal Consultation"
+
+    title = text.title()
+    title = re.sub(r"\bNda\b", "NDA", title)
+    title = re.sub(r"\bIp\b", "IP", title)
+    title = re.sub(r"\bSla\b", "SLA", title)
+    title = re.sub(r"\bLlc\b", "LLC", title)
+
+    return title
+
+
 class ConversationService:
     def __init__(self, repository: ConversationRepository):
         self.repository = repository
@@ -66,6 +157,23 @@ class ConversationService:
     ) -> MessageResponse:
         sources_dicts = [s.model_dump() for s in sources] if sources else []
         telemetry_dict = telemetry.model_dump() if telemetry else None
+
+        # Auto-generate meaningful title on the first user message if current title is generic or default
+        if role == "user":
+            conv = self.repository.get_conversation(conversation_id)
+            if conv:
+                is_first_user_msg = not any(m.role == "user" for m in conv.messages)
+                current_title = (conv.title or "").strip()
+                is_generic = (
+                    not current_title
+                    or current_title in ("New Chat", "Conversation", "Question", "General Consultation", "New Legal Consultation", "Chat")
+                    or current_title.startswith("Consultation for ")
+                    or current_title.startswith("New Chat")
+                )
+                if is_first_user_msg and is_generic:
+                    generated_title = generate_conversation_title(content)
+                    if generated_title:
+                        self.repository.update_conversation(conversation_id, title=generated_title)
 
         msg = self.repository.add_message(
             conversation_id=conversation_id,
