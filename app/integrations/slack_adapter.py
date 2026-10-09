@@ -48,12 +48,13 @@ class SlackAdapter:
         """Register Slack Bolt event listeners."""
 
         @self.app.event("app_mention")
-        def handle_mention(event, say, client):
-            self.handle_message_event(event, say, client)
+        def handle_mention(event, context, say, client):
+            team_id = getattr(context, "team_id", None) or event.get("team")
+            self.handle_message_event(event, say, client, team_id=team_id)
 
         @self.app.event("message")
-        def handle_message(event, say, client):
-            # Only respond to direct messages (channel_type == 'im')
+        def handle_message(event, context, say, client):
+            # Only respond to direct messages (channel_type == 'im') or file shares
             # Channels/groups are handled by app_mention to prevent unsolicited noise
             channel_type = event.get("channel_type")
             subtype = event.get("subtype")
@@ -62,13 +63,14 @@ class SlackAdapter:
             if subtype in ("bot_message", "message_changed", "message_deleted"):
                 return
 
+            team_id = getattr(context, "team_id", None) or event.get("team")
             if channel_type == "im":
-                self.handle_message_event(event, say, client)
+                self.handle_message_event(event, say, client, team_id=team_id)
             elif event.get("files"):
                 # Check if file uploaded in channel with a bot mention or in thread
-                self.handle_message_event(event, say, client)
+                self.handle_message_event(event, say, client, team_id=team_id)
 
-    def handle_message_event(self, event: Dict[str, Any], say, client):
+    def handle_message_event(self, event: Dict[str, Any], say, client, team_id: Optional[str] = None):
         """Unified handler for mention and DM events."""
         event_id = event.get("client_msg_id") or event.get("event_ts") or event.get("ts")
         if event_id and self.dedup.is_duplicate(str(event_id)):
@@ -77,7 +79,7 @@ class SlackAdapter:
 
         channel = event.get("channel")
         user = event.get("user")
-        team = event.get("team")
+        team = team_id or event.get("team")
         # thread_ts is only non-None when inside an existing thread
         thread_ts = event.get("thread_ts")
         # reply_ts is used to reply in the existing thread, or start a new thread off the message ts
@@ -208,6 +210,11 @@ class SlackAdapter:
         doc_id = mapping.document_id if mapping else None
         conv_id = mapping.conversation_id if mapping else None
 
+        logger.info(
+            f"[SlackAdapter:Chat] channel={channel}, user={user}, team={team}, thread_ts={thread_ts} "
+            f"-> active doc_id={doc_id}, conv_id={conv_id}"
+        )
+
         try:
             chat_res = self.api_client.chat(
                 question=question,
@@ -295,6 +302,10 @@ class SlackAdapter:
                 pages = upload_res.get("page_count", 0)
                 chunks = upload_res.get("chunk_count", 0)
 
+                logger.info(
+                    f"[SlackAdapter:Upload] channel={channel}, user={user}, team={team}, thread_ts={thread_ts} "
+                    f"-> indexed doc_id={doc_id}"
+                )
                 # Bind uploaded document to this user's current thread/context
                 self.mapping_repo.save_mapping(
                     channel_id=channel,

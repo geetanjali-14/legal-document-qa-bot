@@ -252,7 +252,7 @@ def test_dm_upload_and_separate_toplevel_message_followup(mock_httpx_cls, slack_
         "chunk_count": 37
     }
 
-    # Step 1: Upload in DM (channel_type="im", no thread_ts, only ts)
+    # Step 1: Upload in DM (channel_type="im", no thread_ts, only ts, team field might be omitted by Slack in file upload)
     dm_channel = "D_USER_DIRECT"
     user_id = "U_EMPLOYEE"
     say_upload = MagicMock()
@@ -262,6 +262,7 @@ def test_dm_upload_and_separate_toplevel_message_followup(mock_httpx_cls, slack_
         "user": user_id,
         "ts": "1678900001.01",
         "client_msg_id": "msg_dm_upload",
+        # team field might not be on file_share message
         "files": [
             {
                 "id": "F_POLICY",
@@ -275,7 +276,7 @@ def test_dm_upload_and_separate_toplevel_message_followup(mock_httpx_cls, slack_
     assert "doc_03f8339dc570" in say_upload.call_args[1]["text"]
 
     # Step 2: Separate top-level DM message from same user asking what doc is about
-    # Note: ts is different, thread_ts is None
+    # Note: ts is different, thread_ts is None, and team_id is explicitly set by Slack
     mock_api_client.chat.return_value = {
         "answer": "This document outlines the guidelines for annual employee increments and merit raises.",
         "conversation_id": "conv_dm_session_1",
@@ -288,11 +289,12 @@ def test_dm_upload_and_separate_toplevel_message_followup(mock_httpx_cls, slack_
         "channel": dm_channel,
         "channel_type": "im",
         "user": user_id,
-        "ts": "1678900005.02",  # Different timestamp!
+        "team": "T_WORKSPACE_123",  # Explicit team
+        "ts": "1678900005.02",      # Different timestamp!
         "client_msg_id": "msg_dm_q1",
         "text": "What is this document about?"
     }
-    slack_adapter.handle_message_event(q1_event, say_q1, client=MagicMock())
+    slack_adapter.handle_message_event(q1_event, say_q1, client=MagicMock(), team_id="T_WORKSPACE_123")
 
     # Verify chat was called WITH the uploaded document_id!
     mock_api_client.chat.assert_called_once_with(

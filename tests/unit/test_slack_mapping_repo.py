@@ -84,3 +84,34 @@ def test_clear_mapping(in_memory_repo):
 
     assert in_memory_repo.get_mapping(channel, user, thread_ts=thread) is None
 
+
+def test_team_id_fallback_resilience(in_memory_repo):
+    """
+    Verifies that if a document is saved without an explicit team_id (or with default_team),
+    and a subsequent message event carries the explicit team_id "T12345",
+    the repository gracefully retrieves the active document context.
+    """
+    channel = "D_DM_CHANNEL"
+    user = "U_EMPLOYEE"
+
+    # Saved with None team_id (resolves to default_team)
+    in_memory_repo.save_mapping(
+        channel_id=channel,
+        user_id=user,
+        team_id=None,
+        thread_ts=None,
+        document_id="doc_annual_increment",
+        conversation_id=None
+    )
+
+    # Retrieved with explicit workspace team_id
+    mapping = in_memory_repo.get_mapping(
+        channel_id=channel,
+        user_id=user,
+        team_id="T0C7THV2CJF",
+        thread_ts=None
+    )
+    assert mapping is not None
+    assert mapping.document_id == "doc_annual_increment"
+
+

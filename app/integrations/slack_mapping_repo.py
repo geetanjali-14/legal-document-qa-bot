@@ -50,20 +50,45 @@ class SlackMappingRepository:
             ).first()
             if mapping:
                 session.expunge(mapping)
+                logger.info(f"[SlackMapping] Found mapping for key={key}: doc={mapping.document_id}, conv={mapping.conversation_id}")
                 return mapping
 
-        # If inside a thread and no thread-specific document was set,
-        # fallback to the user's channel-level root context
+        # Candidate keys to evaluate in order of preference
+        candidates = [key]
         if thread_ts:
-            root_key = self.build_context_key(team_id, channel_id, None, user_id)
-            with self.session_factory() as session:
-                root_mapping = session.query(SlackConversationMappingModel).filter(
-                    SlackConversationMappingModel.context_key == root_key
-                ).first()
-                if root_mapping:
-                    session.expunge(root_mapping)
-                    return root_mapping
+            candidates.append(self.build_context_key(team_id, channel_id, None, user_id))
 
+        if team_id:
+            candidates.append(self.build_context_key(None, channel_id, thread_ts, user_id))
+            if thread_ts:
+                candidates.append(self.build_context_key(None, channel_id, None, user_id))
+        else:
+            candidates.append(self.build_context_key("default_team", channel_id, thread_ts, user_id))
+            if thread_ts:
+                candidates.append(self.build_context_key("default_team", channel_id, None, user_id))
+
+        with self.session_factory() as session:
+            # First pass: Look for an exact or fallback key that has an active document_id
+            for c_key in candidates:
+                mapping = session.query(SlackConversationMappingModel).filter(
+                    SlackConversationMappingModel.context_key == c_key
+                ).first()
+                if mapping and mapping.document_id:
+                    session.expunge(mapping)
+                    logger.info(f"[SlackMapping] Found active document mapping for key={c_key}: doc={mapping.document_id}, conv={mapping.conversation_id}")
+                    return mapping
+
+            # Second pass: If no document-attached mapping, return the first matching session
+            for c_key in candidates:
+                mapping = session.query(SlackConversationMappingModel).filter(
+                    SlackConversationMappingModel.context_key == c_key
+                ).first()
+                if mapping:
+                    session.expunge(mapping)
+                    logger.info(f"[SlackMapping] Found conversation-only mapping for key={c_key}: doc={mapping.document_id}, conv={mapping.conversation_id}")
+                    return mapping
+
+        logger.info(f"[SlackMapping] No mapping found for channel={channel_id}, user={user_id}, thread={thread_ts}")
         return None
 
     def save_mapping(
