@@ -51,29 +51,22 @@ class Settings(BaseSettings):
     MAX_HISTORY_TOKENS: int = 500
 
     # RAG Provider
-    RAG_PROVIDER: Literal["local", "xai", "grok"] = "local"
-    XAI_API_KEY: str = ""
-    XAI_BASE_URL: str = "https://api.x.ai/v1"
-    XAI_COLLECTION_ID: str = ""
+    RAG_PROVIDER: Literal["local"] = "local"
 
     # LLM Provider
-    LLM_PROVIDER: Literal["mock", "openai", "anthropic", "ollama", "gemini", "grok", "xai", "mistral", "groq", "custom_http"] = "mock"
+    LLM_PROVIDER: Literal["groq", "gemini", "openai", "mock"] = "groq"
     LLM_API_KEY: str = ""
     GROQ_API_KEY: str = ""
-    LLM_MODEL: str = "gpt-4o-mini"
+    LLM_MODEL: str = "llama-3.3-70b-versatile"
     LLM_BASE_URL: str = ""
     LLM_TEMPERATURE: float = 0.0
     LLM_MAX_TOKENS: int = 1024
 
     # Embedding Provider
-    EMBEDDING_PROVIDER: Literal["mock", "tfidf", "fastembed", "openai", "ollama", "gemini"] = "tfidf"
+    EMBEDDING_PROVIDER: Literal["gemini", "fastembed", "tfidf", "openai", "mock"] = "tfidf"
     EMBEDDING_API_KEY: str = ""
     EMBEDDING_MODEL: str = "text-embedding-004"
     EMBEDDING_BASE_URL: str = ""
-
-    # OCR Provider
-    OCR_PROVIDER: Literal["local", "mistral", "gemini"] = "local"
-    OCR_API_KEY: str = ""
 
 
 settings = Settings()

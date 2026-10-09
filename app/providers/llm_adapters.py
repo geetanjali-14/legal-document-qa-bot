@@ -6,7 +6,6 @@ from app.services.llm_service import (
     GeminiLLMProvider as InternalGeminiProvider,
     OpenAILLMProvider as InternalOpenAIProvider,
     GroqLLMProvider as InternalGroqProvider,
-    GrokLLMProvider as InternalGrokProvider,
     MockLLMProvider as InternalMockProvider
 )
 from app.core.config import settings
@@ -101,43 +100,6 @@ class OpenAILLMProvider(LLMProvider):
         b_url = base_url or settings.LLM_BASE_URL
         self._provider = InternalOpenAIProvider(api_key=key, model=m, base_url=b_url)
         self.provider_name = "openai"
-        self.model = m
-
-    def generate_answer(
-        self,
-        question: str,
-        context_chunks: List[str],
-        history: Optional[List[Message]] = None
-    ) -> LLMResponse:
-        res = self._provider.generate_answer(question, context_chunks, history)
-        if isinstance(res, LLMResponse):
-            return res
-        return LLMResponse(
-            content=str(res),
-            provider=self.provider_name,
-            model=self.model,
-            token_usage_type="unknown"
-        )
-
-
-class XAILLMProvider(LLMProvider):
-    """
-    Wraps existing Grok / xAI LLM implementation behind the LLMProvider interface.
-    """
-
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        base_url: Optional[str] = None
-    ):
-        key = api_key or getattr(settings, "XAI_API_KEY", "") or settings.LLM_API_KEY
-        if not key:
-            raise ValueError("xAI credentials are missing. Set XAI_API_KEY before using LLM_PROVIDER=xai.")
-        m = model or (settings.LLM_MODEL if "grok" in settings.LLM_MODEL else "grok-beta")
-        b_url = base_url or getattr(settings, "XAI_BASE_URL", "") or settings.LLM_BASE_URL or "https://api.x.ai/v1"
-        self._provider = InternalGrokProvider(api_key=key, model=m, base_url=b_url)
-        self.provider_name = "xai"
         self.model = m
 
     def generate_answer(

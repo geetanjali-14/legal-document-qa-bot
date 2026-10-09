@@ -74,7 +74,19 @@ class ConflictDetector:
             page = getattr(item, "page_number", 1)
 
             # Check for notice periods in termination or dispute or fees
-            if any(k in text.lower() for k in ["notice", "terminate", "payment", "cure"]):
+            t_lower = text.lower()
+            if any(k in t_lower for k in ["notice", "terminate", "payment", "cure"]):
+                # Classify the type of notice to avoid flagging distinct business processes (e.g. renewal vs termination)
+                category = "general"
+                if "renewal" in t_lower or "expiration" in t_lower:
+                    category = "renewal"
+                elif "terminate" in t_lower or "termination" in t_lower:
+                    category = "termination"
+                elif "payment" in t_lower or "invoice" in t_lower or "fees" in t_lower:
+                    category = "payment"
+                elif "cure" in t_lower or "breach" in t_lower:
+                    category = "cure"
+
                 for m in self.NOTICE_PERIOD_RE.finditer(text):
                     num_str = m.group(2) or m.group(1)
                     val = None
@@ -91,24 +103,32 @@ class ConflictDetector:
                             "days": val,
                             "section": sec,
                             "page": page,
+                            "category": category,
                             "snippet": text[:200]
                         })
 
-        # Check for disparate numbers across distinct sections
+        # Check for disparate numbers across distinct sections within the same or overlapping category
         for i in range(len(notice_provisions)):
             for j in range(i + 1, len(notice_provisions)):
                 a = notice_provisions[i]
                 b = notice_provisions[j]
                 if a["section"] != b["section"] and a["days"] != b["days"]:
-                    conflicts.append(
-                        ConflictItem(
-                            issue_type="notice_period",
-                            description=f"Potential inconsistency detected between Section '{a['section']}' ({a['days']} days) and Section '{b['section']}' ({b['days']} days).",
-                            provision_a=a,
-                            provision_b=b,
-                            contradiction_nature="apparent_inconsistency"
-                        )
+                    # Contradiction requires same category, or one being general notice
+                    is_same_topic = (
+                        a["category"] == b["category"] or
+                        a["category"] == "general" or
+                        b["category"] == "general"
                     )
+                    if is_same_topic:
+                        conflicts.append(
+                            ConflictItem(
+                                issue_type="notice_period",
+                                description=f"Potential inconsistency detected between Section '{a['section']}' ({a['days']} days) and Section '{b['section']}' ({b['days']} days).",
+                                provision_a=a,
+                                provision_b=b,
+                                contradiction_nature="apparent_inconsistency"
+                            )
+                        )
 
         return conflicts
 

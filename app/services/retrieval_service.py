@@ -228,19 +228,12 @@ class RetrievalService:
         self.last_embedding_latency_ms = max(0.0, (time.perf_counter() - t_embed_start) * 1000.0)
 
         candidate_k = max(k * 4, 20)
-        try:
-            dense_candidates = self.vector_store.search(
-                document_id=document_id,
-                query_vector=query_vector,
-                top_k=candidate_k,
-                similarity_threshold=sim_threshold
-            )
-        except Exception as dim_err:
-            if "Dimension mismatch" in str(dim_err):
-                logger.warning(f"Embedding dimension mismatch during dense search: {dim_err}. Falling back to BM25 lexical search.")
-                dense_candidates = []
-            else:
-                raise
+        dense_candidates = self.vector_store.search(
+            document_id=document_id,
+            query_vector=query_vector,
+            top_k=candidate_k,
+            similarity_threshold=sim_threshold
+        )
         logger.debug(f"[Retrieval Dense] Found {len(dense_candidates)} candidates")
 
         # 2. BM25 retrieval
@@ -291,6 +284,43 @@ class RetrievalService:
             f"latency={self.last_retrieval_latency_ms:.2f}ms)"
         )
         return deduped
+
+    def rerank_candidates(
+        self,
+        query: str,
+        candidates: List[Tuple[DocumentChunk, float]]
+    ) -> List[Tuple[DocumentChunk, float]]:
+        """
+        Rerank retrieved candidates based on:
+        - semantic / fused relevance score
+        - exact lexical overlap of significant terms
+        - clause and section match with query references
+        """
+        if not candidates:
+            return []
+
+        query_words = self.extract_content_words(query)
+        ref_matches = set(re.findall(r'(?:section|clause|article|schedule|annexure)\s+([0-9IVXLCDM\.\(\)a-z]+)', query, re.IGNORECASE))
+
+        scored = []
+        for chunk, base_score in candidates:
+            final_score = base_score
+
+            chunk_sec = (chunk.section or "") + " " + (getattr(chunk, "clause_number", "") or "")
+            for ref in ref_matches:
+                if ref.lower() in chunk_sec.lower():
+                    final_score += 0.25
+                    break
+
+            if query_words:
+                chunk_words = self.extract_content_words(chunk.text)
+                overlap = len(query_words & chunk_words) / len(query_words)
+                final_score += overlap * 0.15
+
+            scored.append((chunk, final_score))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored
 
     def deduplicate_chunks(self, results: List[Tuple[DocumentChunk, float]]) -> List[Tuple[DocumentChunk, float]]:
         """Remove duplicate or heavily subsumed chunks while preserving highest-ranking score."""

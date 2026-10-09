@@ -241,7 +241,19 @@ class ChunkingService:
                                 token_count=len(buffer.split())
                             )
                         )
-                        buffer = paragraph
+                        # Prepare next buffer with overlap if applicable
+                        if self.chunk_overlap > 0 and len(buffer) > self.chunk_overlap:
+                            overlap_start = len(buffer) - self.chunk_overlap
+                            while (
+                                overlap_start > 0
+                                and buffer[overlap_start - 1].isalnum()
+                                and buffer[overlap_start].isalnum()
+                            ):
+                                overlap_start -= 1
+                            overlap_text = buffer[overlap_start:].strip()
+                            buffer = (overlap_text + " " + paragraph) if overlap_text else paragraph
+                        else:
+                            buffer = paragraph
                         chunk_section = current_section
                     else:
                         buffer = (buffer + "\n\n" + paragraph) if buffer else paragraph

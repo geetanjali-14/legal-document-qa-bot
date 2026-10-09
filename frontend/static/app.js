@@ -1367,7 +1367,7 @@ async function handleFileUpload(file) {
 }
 
 let uploadStatusTimer = null;
-function showStatus(msg, type, autoDismiss = false) {
+function showStatus(msg, type, autoDismiss = true) {
   if (uploadStatusTimer) {
     clearTimeout(uploadStatusTimer);
     uploadStatusTimer = null;
@@ -1376,7 +1376,10 @@ function showStatus(msg, type, autoDismiss = false) {
   uploadStatus.className = `status-box toast ${type}`;
   uploadStatus.classList.remove("hidden");
 
-  if (autoDismiss) {
+  // Loading status shouldn't auto-dismiss by default unless explicitly specified
+  const shouldDismiss = type === "loading" ? autoDismiss === true && arguments.length >= 3 : autoDismiss;
+
+  if (shouldDismiss) {
     uploadStatusTimer = setTimeout(() => {
       uploadStatus.classList.add("hidden");
     }, 4000);

@@ -236,9 +236,12 @@ def test_page_limit_rejection_no_vector_store_artifacts(isolated_doc_service, mo
     assert len(isolated_doc_service.vector_store.chunks_by_doc) == 0
     assert len(isolated_doc_service.vector_store.vectors_by_doc) == 0
 
-    # No files in vector store directory
-    vector_files = list(isolated_doc_service.vector_store.storage_dir.glob("*"))
-    assert len(vector_files) == 0
+    # No document vector or chunk files in vector store directory
+    doc_artifacts = [
+        f for f in isolated_doc_service.vector_store.storage_dir.glob("*")
+        if f.name != "qdrant_db"
+    ]
+    assert len(doc_artifacts) == 0
 
 
 def test_page_limit_rejection_does_not_poison_hash_index(isolated_doc_service, monkeypatch):

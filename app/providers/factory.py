@@ -3,12 +3,10 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.providers.interfaces import RAGProvider, LLMProvider
 from app.providers.rag_local import LocalRAGProvider
-from app.providers.rag_xai import XAIRAGProvider
 from app.providers.llm_adapters import (
     GeminiLLMProvider,
     OpenAILLMProvider,
     GroqLLMProvider,
-    XAILLMProvider,
     MockLLMProviderAdapter
 )
 
@@ -52,16 +50,8 @@ class ProviderFactory:
                 embedding_service=kwargs.get("embedding_service")
             )
 
-        elif provider in ("xai", "grok"):
-            return XAIRAGProvider(
-                api_key=kwargs.get("api_key"),
-                base_url=kwargs.get("base_url"),
-                collection_id=kwargs.get("collection_id"),
-                client=kwargs.get("client")
-            )
-
         else:
-            raise ValueError(f"Unsupported RAG provider: '{provider}'. Valid options: 'local', 'xai'.")
+            raise ValueError(f"Unsupported RAG provider: '{provider}'. Valid options: 'local'.")
 
     @staticmethod
     def get_llm_provider(
@@ -71,7 +61,13 @@ class ProviderFactory:
         provider = (llm_provider_name or settings.LLM_PROVIDER).lower()
         logger.info(f"[ProviderFactory] Selecting LLM provider: {provider}")
 
-        if provider == "gemini":
+        if provider == "groq":
+            return GroqLLMProvider(
+                api_key=kwargs.get("api_key") or settings.LLM_API_KEY,
+                model=kwargs.get("model") or settings.LLM_MODEL,
+                base_url=kwargs.get("base_url") or settings.LLM_BASE_URL
+            )
+        elif provider == "gemini":
             return GeminiLLMProvider(
                 api_key=kwargs.get("api_key") or settings.LLM_API_KEY,
                 model=kwargs.get("model") or settings.LLM_MODEL
@@ -81,18 +77,6 @@ class ProviderFactory:
                 api_key=kwargs.get("api_key") or settings.LLM_API_KEY,
                 model=kwargs.get("model") or settings.LLM_MODEL,
                 base_url=kwargs.get("base_url") or settings.LLM_BASE_URL
-            )
-        elif provider == "groq":
-            return GroqLLMProvider(
-                api_key=kwargs.get("api_key") or settings.LLM_API_KEY,
-                model=kwargs.get("model") or settings.LLM_MODEL,
-                base_url=kwargs.get("base_url") or settings.LLM_BASE_URL
-            )
-        elif provider in ("xai", "grok"):
-            return XAILLMProvider(
-                api_key=kwargs.get("api_key"),
-                model=kwargs.get("model"),
-                base_url=kwargs.get("base_url")
             )
         elif provider == "mock":
             return MockLLMProviderAdapter()

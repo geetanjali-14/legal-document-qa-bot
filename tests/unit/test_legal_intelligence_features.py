@@ -294,16 +294,12 @@ def test_hierarchical_chunking_parent_child_provenance():
     assert any(c.clause_number or c.section_number for c in chunks)
 
 
-def test_grok_and_mistral_provider_initialization():
-    """Verify Grok and Mistral providers instantiate with custom endpoints."""
-    from app.services.llm_service import GrokLLMProvider, MistralLLMProvider
-    grok = GrokLLMProvider(api_key="mock-grok-key", model="grok-beta")
-    assert grok.provider_name == "grok"
-    assert "api.x.ai" in grok.base_url
-
-    mistral = MistralLLMProvider(api_key="mock-mistral-key", model="mistral-large-latest")
-    assert mistral.provider_name == "mistral"
-    assert "api.mistral.ai" in mistral.base_url
+def test_groq_provider_initialization():
+    """Verify Groq provider instantiates with custom endpoint and model."""
+    from app.services.llm_service import GroqLLMProvider
+    groq = GroqLLMProvider(api_key="mock-groq-key", model="llama-3.3-70b-versatile")
+    assert groq.provider_name == "groq"
+    assert "api.groq.com" in groq.base_url
 
 
 def test_retrieval_candidate_reranking():
