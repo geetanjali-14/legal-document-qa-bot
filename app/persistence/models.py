@@ -68,6 +68,23 @@ class DocumentProfileModel(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
 
+class SlackConversationMappingModel(Base):
+    __tablename__ = "slack_conversation_mappings"
+
+    # Unique context key: "{team_id}:{channel_id}:{thread_ts_or_root}:{user_id}"
+    context_key = Column(String(128), primary_key=True)
+    team_id = Column(String(64), nullable=False, default="")
+    channel_id = Column(String(64), nullable=False)
+    thread_ts = Column(String(64), nullable=False, default="")
+    user_id = Column(String(64), nullable=False)
+    document_id = Column(String(64), nullable=True)
+    conversation_id = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
 Index("idx_messages_conv_seq", MessageModel.conversation_id, MessageModel.sequence)
 Index("idx_conversations_updated", ConversationModel.updated_at.desc())
 Index("idx_doc_profiles_hash", DocumentProfileModel.content_hash)
+Index("idx_slack_mapping_user", SlackConversationMappingModel.user_id, SlackConversationMappingModel.channel_id)
+

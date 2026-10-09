@@ -68,5 +68,11 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-004"
     EMBEDDING_BASE_URL: str = ""
 
+    # Slack Integration
+    SLACK_BOT_TOKEN: str = ""
+    SLACK_APP_TOKEN: str = ""
+    LEGAL_QA_API_BASE_URL: str = "http://localhost:8000/api/v1"
+
 
 settings = Settings()
+
