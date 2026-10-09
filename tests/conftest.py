@@ -20,6 +20,7 @@ def default_test_environment(request, monkeypatch):
     monkeypatch.setattr(settings, "SIMILARITY_THRESHOLD", 0.10)
     monkeypatch.setattr(settings, "RELEVANCE_CONFIDENCE_THRESHOLD", 0.35)
     monkeypatch.setattr(settings, "MIN_CONTENT_WORD_OVERLAP", 0.35)
+    monkeypatch.setattr(settings, "DATABASE_URL", "")
 
     if os.environ.get("LIVE_GEMINI_TEST") == "1" or request.node.get_closest_marker("no_mock_llm"):
         yield

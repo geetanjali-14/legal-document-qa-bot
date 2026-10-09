@@ -76,97 +76,100 @@ class LocalStorageService(StorageService):
         return target if target.exists() else None
 
 
-class CloudflareR2StorageService(StorageService):
+class SupabaseStorageService(StorageService):
     """
-    Cloudflare R2 storage backend using standard boto3 S3 client interface.
-    Maintains a local temporary/cache directory for processing needs (PyMuPDF / PIL).
+    Supabase Storage backend using standard Supabase Storage REST API (v1).
+    Maintains a local cache directory for fast processing needs (PyMuPDF / PIL).
     """
 
     def __init__(
         self,
-        account_id: Optional[str] = None,
-        access_key_id: Optional[str] = None,
-        secret_access_key: Optional[str] = None,
+        supabase_url: Optional[str] = None,
+        service_key: Optional[str] = None,
         bucket_name: Optional[str] = None,
-        endpoint_url: Optional[str] = None,
         local_cache_dir: Optional[Path] = None,
-        s3_client: Optional[object] = None
+        http_client: Optional[object] = None
     ):
-        self.account_id = account_id or settings.R2_ACCOUNT_ID
-        self.access_key_id = access_key_id or settings.R2_ACCESS_KEY_ID
-        self.secret_access_key = secret_access_key or settings.R2_SECRET_ACCESS_KEY
-        self.bucket_name = bucket_name or settings.R2_BUCKET_NAME
-        self.endpoint_url = (
-            endpoint_url
-            or settings.R2_ENDPOINT_URL
-            or (f"https://{self.account_id}.r2.cloudflarestorage.com" if self.account_id else "")
-        )
+        raw_url = supabase_url or settings.SUPABASE_URL
+        self.supabase_url = raw_url.rstrip("/") if raw_url else ""
+        self.service_key = service_key or settings.SUPABASE_SERVICE_KEY
+        self.bucket_name = bucket_name or settings.SUPABASE_BUCKET_NAME
         self.local_cache_dir = Path(local_cache_dir) if local_cache_dir else settings.UPLOAD_DIR
         self.local_cache_dir.mkdir(parents=True, exist_ok=True)
 
-        if s3_client is not None:
-            self._client = s3_client
-        else:
-            self._client = self._init_client()
+        import httpx
+        self._client = http_client or httpx.Client(timeout=30.0)
 
-    def _init_client(self):
-        try:
-            import boto3
-            from botocore.config import Config
-            return boto3.client(
-                "s3",
-                endpoint_url=self.endpoint_url,
-                aws_access_key_id=self.access_key_id,
-                aws_secret_access_key=self.secret_access_key,
-                config=Config(signature_version="s3v4"),
-                region_name="auto"
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize boto3 R2 S3 client: {e}")
-            raise RuntimeError(f"Cloudflare R2 initialization failed: {e}") from e
+    @property
+    def _headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self.service_key}",
+            "apikey": self.service_key,
+        }
+
+    def _object_url(self, filename: str) -> str:
+        # Supabase Storage endpoint: /storage/v1/object/{bucket}/{wildcard}
+        return f"{self.supabase_url}/storage/v1/object/{self.bucket_name}/{filename}"
 
     def save_file(self, filename: str, content: bytes) -> str:
         # Cache locally
         local_path = self.local_cache_dir / filename
         local_path.write_bytes(content)
 
-        # Upload to R2 bucket
+        if not self.supabase_url or not self.service_key:
+            logger.info(f"Supabase credentials not configured; stored '{filename}' in local cache only.")
+            return filename
+
         try:
-            self._client.put_object(
-                Bucket=self.bucket_name,
-                Key=filename,
-                Body=content
-            )
-            logger.info(f"Uploaded file '{filename}' to Cloudflare R2 bucket '{self.bucket_name}'")
+            url = self._object_url(filename)
+            headers = {**self._headers, "Content-Type": "application/octet-stream", "x-upsert": "true"}
+            resp = self._client.post(url, content=content, headers=headers)
+            if resp.status_code not in (200, 201):
+                # Try PUT if POST returned 400 (duplicate / update)
+                resp = self._client.put(url, content=content, headers=headers)
+            resp.raise_for_status()
+            logger.info(f"Uploaded file '{filename}' to Supabase bucket '{self.bucket_name}'")
         except Exception as e:
-            logger.error(f"Failed to upload '{filename}' to Cloudflare R2: {e}")
-            raise RuntimeError(f"Cloudflare R2 upload error: {e}") from e
+            logger.error(f"Failed to upload '{filename}' to Supabase Storage: {e}")
+            raise RuntimeError(f"Supabase Storage upload error: {e}") from e
         return filename
 
     def get_file_bytes(self, filename: str) -> Optional[bytes]:
-        # Return from local cache if present
         local_path = self.local_cache_dir / filename
         if local_path.exists():
             return local_path.read_bytes()
 
-        # Fetch from R2 bucket
-        try:
-            response = self._client.get_object(Bucket=self.bucket_name, Key=filename)
-            content = response["Body"].read()
-            # Cache locally
-            local_path.write_bytes(content)
-            return content
-        except Exception as e:
-            logger.warning(f"Could not retrieve '{filename}' from Cloudflare R2: {e}")
+        if not self.supabase_url or not self.service_key:
             return None
+
+        try:
+            url = self._object_url(filename)
+            resp = self._client.get(url, headers=self._headers)
+            if resp.status_code == 200:
+                content = resp.content
+                local_path.write_bytes(content)
+                return content
+            elif resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+        except Exception as e:
+            logger.warning(f"Could not retrieve '{filename}' from Supabase Storage: {e}")
+            return None
+        return None
 
     def file_exists(self, filename: str) -> bool:
         local_path = self.local_cache_dir / filename
         if local_path.exists():
             return True
+
+        if not self.supabase_url or not self.service_key:
+            return False
+
         try:
-            self._client.head_object(Bucket=self.bucket_name, Key=filename)
-            return True
+            url = self._object_url(filename)
+            # Use GET or HEAD to test object presence
+            resp = self._client.get(url, headers=self._headers)
+            return resp.status_code == 200
         except Exception:
             return False
 
@@ -175,12 +178,18 @@ class CloudflareR2StorageService(StorageService):
         if local_path.exists():
             local_path.unlink()
 
-        try:
-            self._client.delete_object(Bucket=self.bucket_name, Key=filename)
-            logger.info(f"Deleted file '{filename}' from Cloudflare R2 bucket '{self.bucket_name}'")
+        if not self.supabase_url or not self.service_key:
             return True
+
+        try:
+            url = self._object_url(filename)
+            resp = self._client.delete(url, headers=self._headers)
+            if resp.status_code in (200, 204):
+                logger.info(f"Deleted file '{filename}' from Supabase Storage bucket '{self.bucket_name}'")
+                return True
+            return False
         except Exception as e:
-            logger.warning(f"Could not delete '{filename}' from Cloudflare R2: {e}")
+            logger.warning(f"Could not delete '{filename}' from Supabase Storage: {e}")
             return False
 
     def get_local_path(self, filename: str) -> Optional[Path]:
@@ -188,7 +197,6 @@ class CloudflareR2StorageService(StorageService):
         if local_path.exists():
             return local_path
 
-        # If not cached locally, download from R2
         content = self.get_file_bytes(filename)
         if content is not None:
             return local_path
@@ -198,7 +206,7 @@ class CloudflareR2StorageService(StorageService):
 def get_storage_service(backend: Optional[str] = None) -> StorageService:
     """Factory helper to obtain the configured storage service."""
     chosen_backend = (backend or settings.STORAGE_BACKEND).lower()
-    if chosen_backend == "r2":
-        return CloudflareR2StorageService()
+    if chosen_backend == "supabase":
+        return SupabaseStorageService()
     return LocalStorageService()
 

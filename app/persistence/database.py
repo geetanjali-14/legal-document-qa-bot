@@ -20,7 +20,6 @@ class DatabaseManager:
             if settings.DATABASE_URL:
                 db_url = settings.DATABASE_URL
                 if db_url.startswith("postgres://"):
-                    # Standardize legacy Heroku/Render dialect string
                     db_url = "postgresql://" + db_url[len("postgres://"):]
                 is_sqlite = db_url.startswith("sqlite")
             else:

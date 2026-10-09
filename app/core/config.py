@@ -29,12 +29,10 @@ class Settings(BaseSettings):
     VECTOR_STORE_DIR: Path = Path("data/vector_store")
     DATABASE_PATH: Path = Path("data/legal_qa.db")
     DATABASE_URL: str = ""  # e.g. postgresql://user:pass@localhost:5432/legal_qa (empty falls back to sqlite)
-    STORAGE_BACKEND: Literal["local", "r2"] = "local"
-    R2_ACCOUNT_ID: str = ""
-    R2_ACCESS_KEY_ID: str = ""
-    R2_SECRET_ACCESS_KEY: str = ""
-    R2_BUCKET_NAME: str = ""
-    R2_ENDPOINT_URL: str = ""  # optional override; defaults to https://<account_id>.r2.cloudflarestorage.com
+    STORAGE_BACKEND: Literal["local", "supabase"] = "local"
+    SUPABASE_URL: str = ""
+    SUPABASE_SERVICE_KEY: str = ""
+    SUPABASE_BUCKET_NAME: str = "legal-documents"
     MAX_FILE_SIZE_MB: int = 25
     MAX_DOCUMENT_PAGES: int = 500
     MAX_CHUNKS_PER_DOC: int = 5000

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 from app.core.config import settings
 from app.persistence.database import DatabaseManager
 from app.persistence.repository import ConversationRepository
-from app.services.storage_service import LocalStorageService, CloudflareR2StorageService
+from app.services.storage_service import LocalStorageService, SupabaseStorageService
 from app.services.document_service import DocumentService
 from app.services.pdf_service import PDFService
 from app.services.chunking_service import ChunkingService
@@ -44,9 +44,9 @@ def test_sqlite_and_postgres_url_initialization(temp_dirs, monkeypatch):
 
         db_mgr_pg = DatabaseManager(db_path=temp_dirs["db"])
         assert db_mgr_pg is not None
-        # Verify normalization of postgres:// to postgresql://
+        # Verify normalization of postgres:// to postgresql+psycopg2:// or postgresql://
         passed_url = mock_engine.call_args[0][0]
-        assert passed_url.startswith("postgresql://")
+        assert passed_url.startswith("postgresql")
 
 
 def test_document_record_persistence_in_db(temp_dirs):
@@ -107,41 +107,48 @@ def test_local_storage_service(temp_dirs):
     assert storage.get_file_bytes(name) is None
 
 
-def test_cloudflare_r2_storage_service_mocked(temp_dirs):
-    """Verify Cloudflare R2 storage operations using mocked boto3 client."""
-    mock_s3 = MagicMock()
-    mock_body = MagicMock()
-    mock_body.read.return_value = b"%PDF-1.4 r2 content bytes"
-    mock_s3.get_object.return_value = {"Body": mock_body}
+def test_supabase_storage_service_mocked(temp_dirs):
+    """Verify Supabase Storage operations using mocked HTTP client."""
+    mock_http = MagicMock()
+    mock_post_resp = MagicMock()
+    mock_post_resp.status_code = 200
+    mock_http.post.return_value = mock_post_resp
 
-    r2_storage = CloudflareR2StorageService(
-        account_id="fake_account",
-        access_key_id="fake_key",
-        secret_access_key="fake_secret",
-        bucket_name="legal-qa-bucket",
+    mock_get_resp = MagicMock()
+    mock_get_resp.status_code = 200
+    mock_get_resp.content = b"%PDF-1.4 supabase content bytes"
+    mock_http.get.return_value = mock_get_resp
+
+    mock_del_resp = MagicMock()
+    mock_del_resp.status_code = 200
+    mock_http.delete.return_value = mock_del_resp
+
+    supabase_storage = SupabaseStorageService(
+        supabase_url="https://xyzcompany.supabase.co",
+        service_key="fake-service-key",
+        bucket_name="legal-documents",
         local_cache_dir=temp_dirs["uploads"],
-        s3_client=mock_s3
+        http_client=mock_http
     )
 
     # Save
-    saved = r2_storage.save_file("contract.pdf", b"%PDF-1.4 r2 content bytes")
+    saved = supabase_storage.save_file("contract.pdf", b"%PDF-1.4 supabase content bytes")
     assert saved == "contract.pdf"
-    mock_s3.put_object.assert_called_once_with(
-        Bucket="legal-qa-bucket",
-        Key="contract.pdf",
-        Body=b"%PDF-1.4 r2 content bytes"
-    )
+    mock_http.post.assert_called_once()
+    assert "https://xyzcompany.supabase.co/storage/v1/object/legal-documents/contract.pdf" in mock_http.post.call_args[0][0]
 
     # File exists check
-    assert r2_storage.file_exists("contract.pdf") is True
+    assert supabase_storage.file_exists("contract.pdf") is True
+
+    # Get file bytes
+    retrieved_bytes = supabase_storage.get_file_bytes("contract.pdf")
+    assert retrieved_bytes == b"%PDF-1.4 supabase content bytes"
 
     # Delete
-    deleted = r2_storage.delete_file("contract.pdf")
+    deleted = supabase_storage.delete_file("contract.pdf")
     assert deleted is True
-    mock_s3.delete_object.assert_called_once_with(
-        Bucket="legal-qa-bucket",
-        Key="contract.pdf"
-    )
+    mock_http.delete.assert_called_once()
+    assert "https://xyzcompany.supabase.co/storage/v1/object/legal-documents/contract.pdf" in mock_http.delete.call_args[0][0]
 
 
 def test_idempotent_vector_rebuild_from_persistent_storage(temp_dirs):
