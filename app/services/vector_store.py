@@ -14,24 +14,40 @@ from app.core.errors import EmbeddingDimensionMismatchError
 class VectorStore:
     """
     Production-grade vector store backed by Neon pgvector / relational DB persistence,
-    with local embedded Qdrant and memory cache for low-latency retrieval.
-    Provides document isolation, deterministic chunk IDs, and safe recovery.
+    with in-memory Qdrant cache for low-latency retrieval.
+    When DATABASE_URL (PostgreSQL/Neon) is configured, Neon pgvector is the sole source
+    of truth; local file-based Qdrant and disk serialization are skipped entirely.
+    When running without a database URL, local numpy/.json files and file-based Qdrant
+    serve as the local development fallback.
     """
     def __init__(self, storage_dir: Optional[Path] = None, repository: Optional[object] = None):
         self.storage_dir = storage_dir or settings.VECTOR_STORE_DIR
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.repository = repository
 
-        # Local embedded Qdrant DB directory (disposable fast cache)
-        self.qdrant_dir = self.storage_dir / "qdrant_db"
-        self.qdrant_dir.mkdir(parents=True, exist_ok=True)
+        # Determine whether a relational DB (PostgreSQL/Neon) is the source of truth.
+        # When it is, skip file-based Qdrant and local disk entirely; local filesystem
+        # is disposable on Render and similar ephemeral runtimes.
+        _db_url = settings.DATABASE_URL or ""
+        self._db_is_source_of_truth: bool = bool(
+            _db_url and ("postgresql" in _db_url.lower() or _db_url.lower().startswith("postgres://"))
+        )
 
-        try:
-            self.qdrant_client = QdrantClient(path=str(self.qdrant_dir))
-            logger.info(f"Initialized local embedded Qdrant client at {self.qdrant_dir}")
-        except Exception as e:
-            logger.warning(f"Failed to initialize file-based Qdrant, falling back to memory: {e}")
+        self.qdrant_dir = self.storage_dir / "qdrant_db"
+
+        if self._db_is_source_of_truth:
+            # Use in-memory Qdrant only as an acceleration cache; no filesystem writes.
             self.qdrant_client = QdrantClient(":memory:")
+            logger.info("PostgreSQL/Neon configured — using in-memory Qdrant cache (pgvector is source of truth, local qdrant_db skipped)")
+        else:
+            # Local development / offline fallback: persist Qdrant state to disk.
+            self.qdrant_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                self.qdrant_client = QdrantClient(path=str(self.qdrant_dir))
+                logger.info(f"Initialized local embedded Qdrant client at {self.qdrant_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize file-based Qdrant, falling back to memory: {e}")
+                self.qdrant_client = QdrantClient(":memory:")
 
         # In-memory document stores: doc_id -> chunks, doc_id -> embeddings matrix
         self.chunks_by_doc: Dict[str, List[DocumentChunk]] = {}
@@ -62,7 +78,12 @@ class VectorStore:
         # 1. Load from DB repository if configured
         self._load_from_repository()
 
-        # 2. Check local disk files for any additional/fallback cached items
+        # 2. When PostgreSQL/Neon is the source of truth, skip disk files entirely.
+        #    Local .npy / _chunks.json files are not authoritative and the directory is disposable.
+        if self._db_is_source_of_truth:
+            return
+
+        # 3. Local development fallback: restore from disk for any docs not already loaded from DB
         for chunks_path in self.storage_dir.glob("*_chunks.json"):
             doc_id = chunks_path.stem.replace("_chunks", "")
             if doc_id in self.chunks_by_doc:
@@ -231,23 +252,23 @@ class VectorStore:
             except Exception as dberr:
                 logger.warning(f"Failed to persist chunks to database repository for {document_id}: {dberr}")
 
-        # Persist vectors and chunks to disk
-        np.save(str(self._get_doc_vector_path(document_id)), normalized_vectors)
-        with open(self._get_doc_chunks_path(document_id), "w", encoding="utf-8") as f:
-            json.dump([c.model_dump() for c in chunks], f, indent=2)
-
-        # Persist index compatibility metadata
+        # In local/dev mode, also write disk files as a durable fallback.
+        # Skip entirely when PostgreSQL/Neon is the source of truth (filesystem is disposable).
         prov = (embedding_provider or settings.EMBEDDING_PROVIDER).lower()
         mod = embedding_model or settings.EMBEDDING_MODEL
-        index_meta = {
-            "document_id": document_id,
-            "embedding_provider": prov,
-            "embedding_model": mod,
-            "dimension": int(normalized_vectors.shape[1]),
-            "chunk_count": len(chunks)
-        }
-        with open(self._get_doc_meta_path(document_id), "w", encoding="utf-8") as f:
-            json.dump(index_meta, f, indent=2)
+        if not self._db_is_source_of_truth:
+            np.save(str(self._get_doc_vector_path(document_id)), normalized_vectors)
+            with open(self._get_doc_chunks_path(document_id), "w", encoding="utf-8") as f:
+                json.dump([c.model_dump() for c in chunks], f, indent=2)
+            index_meta = {
+                "document_id": document_id,
+                "embedding_provider": prov,
+                "embedding_model": mod,
+                "dimension": int(normalized_vectors.shape[1]),
+                "chunk_count": len(chunks)
+            }
+            with open(self._get_doc_meta_path(document_id), "w", encoding="utf-8") as f:
+                json.dump(index_meta, f, indent=2)
 
         logger.info(f"Stored {len(chunks)} chunks and vectors for document {document_id} in Qdrant [provider={prov}, model={mod}, dim={normalized_vectors.shape[1]}]")
 
