@@ -195,9 +195,14 @@ class VectorStore:
 
         try:
             col_name = self._get_collection_name(document_id)
-            existing_cols = [c.name for c in self.qdrant_client.get_collections().collections]
-            if col_name in existing_cols:
-                self.qdrant_client.delete_collection(col_name)
+            # Defensively ensure Qdrant meta.json exists (in case data was wiped externally while running)
+            if (self.qdrant_dir / "meta.json").exists():
+                existing_cols = [c.name for c in self.qdrant_client.get_collections().collections]
+                if col_name in existing_cols:
+                    self.qdrant_client.delete_collection(col_name)
+        except FileNotFoundError:
+            # Underlying storage directory was wiped externally while running; safe to ignore
+            pass
         except Exception as q_err:
             logger.warning(f"Could not delete Qdrant collection for {document_id}: {q_err}")
 
